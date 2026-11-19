@@ -1,0 +1,9 @@
+{
+  "/_global-error/page": "/_global-error",
+  "/_not-found/page": "/_not-found",
+  "/api/analyze/route": "/api/analyze",
+  "/icon.svg/route": "/icon.svg",
+  "/opengraph-image/route": "/opengraph-image",
+  "/page": "/",
+  "/twitter-image/route": "/twitter-image"
+}
