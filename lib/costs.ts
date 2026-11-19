@@ -3,7 +3,7 @@ import { formatBytes, formatMoney, formatNumber, formatRatio } from "./format";
 import type { AnalysisResult } from "./types";
 
 export type RowId = "today" | "raw" | "minified" | "gzip" | "brotli" | "zstd";
-
+// Change
 export interface CostRow {
   id: RowId;
   label: string;
