@@ -74,7 +74,7 @@ export function buildFindings(f: FindingInput): Finding[] {
       id: "redirect",
       severity: "high",
       title: `This endpoint redirects to ${f.redirectTo}`,
-      detail: "We don't follow redirects for safety. Paste the final URL to measure the real response.",
+      detail: "We follow up to 3 redirects, re-checking each one, and this chain went further. Paste the final URL to measure the real response.",
     });
   }
 

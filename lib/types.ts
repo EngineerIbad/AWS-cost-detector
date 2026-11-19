@@ -14,7 +14,8 @@ export interface CompressionResult {
 }
 
 export interface AnalysisResult {
-  source: "live" | "demo" | "payload";
+  /** "shared" = rebuilt from a share link: sizes only, no body, headers or findings. */
+  source: "live" | "demo" | "payload" | "shared";
   status: number | null;
   contentType: string | null;
   contentEncoding: string | null;
@@ -38,6 +39,8 @@ export interface AnalysisResult {
   redirectTo: string | null;
   /** Present when pagination sampling was requested. Sizes only, never page URLs. */
   pagination?: PaginationResult | null;
+  /** Shared results only: how many pages the sharer sampled. */
+  sampledPages?: number;
 }
 
 export interface PageSample {

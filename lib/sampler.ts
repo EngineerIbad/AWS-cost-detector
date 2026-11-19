@@ -2,7 +2,7 @@
  * Sequentially samples up to MAX_SAMPLED_PAGES pages of a paginated endpoint.
  *
  * The actual HTTP call is injected (`fetchPage`) so the route can route every
- * page through safeFetch (DNS/IP vetting, pinned lookup, no redirects, timeout,
+ * page through safeFetchFollow (DNS/IP vetting per hop, pinned lookup, ≤3 redirects, timeout,
  * size cap), and so tests can run without a network. Nothing here logs.
  */
 import { measurePage, parseBody, type ParsedBody } from "./analyze";

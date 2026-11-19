@@ -895,7 +895,7 @@ function buildFindings(f) {
             id: "redirect",
             severity: "high",
             title: `This endpoint redirects to ${f.redirectTo}`,
-            detail: "We don't follow redirects for safety. Paste the final URL to measure the real response."
+            detail: "We follow up to 3 redirects, re-checking each one, and this chain went further. Paste the final URL to measure the real response."
         });
     }
     if (f.status !== null && (f.status < 200 || f.status >= 300) && !f.redirectTo) {
@@ -1399,7 +1399,7 @@ __turbopack_context__.s([
  * Sequentially samples up to MAX_SAMPLED_PAGES pages of a paginated endpoint.
  *
  * The actual HTTP call is injected (`fetchPage`) so the route can route every
- * page through safeFetch (DNS/IP vetting, pinned lookup, no redirects, timeout,
+ * page through safeFetchFollow (DNS/IP vetting per hop, pinned lookup, ≤3 redirects, timeout,
  * size cap), and so tests can run without a network. Nothing here logs.
  */ var __TURBOPACK__imported__module__$5b$project$5d2f$lib$2f$analyze$2e$ts__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__ = __turbopack_context__.i("[project]/lib/analyze.ts [app-rsc] (ecmascript)");
 var __TURBOPACK__imported__module__$5b$project$5d2f$lib$2f$pagination$2e$ts__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__ = __turbopack_context__.i("[project]/lib/pagination.ts [app-rsc] (ecmascript)");

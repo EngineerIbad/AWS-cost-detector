@@ -2,6 +2,7 @@
  * A small, strict curl command parser. Supports the subset of curl that
  * describes a single HTTP request; anything else produces a clear error.
  */
+import { isSensitiveHeaderName } from "./redact";
 
 export interface ParsedRequest {
   method: string;
@@ -204,7 +205,11 @@ export function parseCurl(input: string): ParsedRequest {
 
   const addHeader = (raw: string) => {
     const idx = raw.indexOf(":");
-    if (idx <= 0) throw new CurlParseError(`This header isn't valid: "${raw.slice(0, 60)}". Headers look like "Name: value".`);
+    if (idx <= 0) {
+      // Echo only the first word (the would-be name), never a possible value.
+      const head = raw.trim().split(/[\s=]/)[0].slice(0, 40);
+      throw new CurlParseError(`A header is missing its colon${head && !isSensitiveHeaderName(head) ? ` ("${head}")` : ""}. Headers look like "Name: value".`);
+    }
     const name = raw.slice(0, idx).trim();
     const value = raw.slice(idx + 1).trim();
     if (!/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/.test(name)) {

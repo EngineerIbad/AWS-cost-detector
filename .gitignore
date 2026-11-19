@@ -12,7 +12,7 @@ next-env.d.ts
 # env files
 .env*.local
 .env
-
+/tests/
 # Vercel
 .vercel/
 

@@ -1,9 +1,8 @@
-import { monthlyCostForBytes, type Pricing } from "./pricing";
+import { activeRates, CURRENCY, getModel, isCustom, monthlyCostForBytes, type PricingOptions } from "./pricing";
 import { formatBytes, formatMoney, formatNumber, formatRatio } from "./format";
 import type { AnalysisResult } from "./types";
 
 export type RowId = "today" | "raw" | "minified" | "gzip" | "brotli" | "zstd";
-// Change
 export interface CostRow {
   id: RowId;
   label: string;
@@ -75,14 +74,16 @@ export function effectiveSizes(a: AnalysisResult, usePageAverages: boolean): Eff
  * With pagination on, pass sessions × pages per session as `monthlyRequests`
  * and `usePageAverages = true` so each row uses the mean sampled page size.
  */
-export function computeCosts(a: AnalysisResult, monthlyRequests: number, pricing: Pricing, usePageAverages = false): CostSummary {
+export function computeCosts(a: AnalysisResult, monthlyRequests: number, pricing: PricingOptions, usePageAverages = false): CostSummary {
   const make = (id: RowId, label: string, bytes: number | null, ms: number | null = null, note?: string): CostRow => {
     const monthlyBytes = bytes === null ? 0 : bytes * monthlyRequests;
     const monthlyCost = bytes === null ? 0 : monthlyCostForBytes(monthlyBytes, pricing);
     return { id, label, note, bytes, monthlyBytes, monthlyCost, annualCost: monthlyCost * 12, ms };
   };
 
-  const todayNote = a.source === "live" ? `as served (${encodingName(a.contentEncoding)})` : a.source === "demo" ? `demo API (${encodingName(a.contentEncoding)})` : `assumed ${encodingName(a.contentEncoding)}`;
+  const enc = encodingName(a.contentEncoding);
+  const todayNote =
+    a.source === "live" ? `as served (${enc})` : a.source === "demo" ? `demo API (${enc})` : a.source === "shared" ? `as measured (${enc})` : `assumed ${enc}`;
   const sz = effectiveSizes(a, usePageAverages);
   const today = make("today", "What you send today", sz.wireBytes, null, todayNote);
   const rows: CostRow[] = [today, make("raw", "Uncompressed", sz.rawBytes)];
@@ -105,8 +106,7 @@ export function buildCopySummary(
   a: AnalysisResult,
   s: CostSummary,
   monthlyRequests: number,
-  pricing: Pricing,
-  defaults: boolean,
+  pricing: PricingOptions,
   link?: string,
   sessions?: SessionTraffic | null,
 ): string {
@@ -133,15 +133,20 @@ export function buildCopySummary(
       continue;
     }
     const ratio = r.id === "raw" ? "" : ` (${formatRatio(sz.rawBytes, r.bytes)})`;
-    lines.push(`- ${r.label}: ${formatBytes(r.bytes)}${ratio} → ${formatBytes(r.monthlyBytes)}/mo, ${formatMoney(r.monthlyCost, pricing.currency)}/mo`);
+    lines.push(`- ${r.label}: ${formatBytes(r.bytes)}${ratio} → ${formatBytes(r.monthlyBytes)}/mo, ${formatMoney(r.monthlyCost, CURRENCY)}/mo`);
   }
   lines.push("");
   if (s.best && s.best.id !== "today" && s.monthlySavings > 0) {
-    lines.push(`Switching to ${s.best.label} could save ${formatMoney(s.monthlySavings, pricing.currency)}/month (${formatMoney(s.annualSavings, pricing.currency)}/year).`);
+    lines.push(`Switching to ${s.best.label} could save ${formatMoney(s.monthlySavings, CURRENCY)}/month (${formatMoney(s.annualSavings, CURRENCY)}/year).`);
   } else {
     lines.push("No egress savings available at this traffic level.");
   }
-  lines.push(defaults ? "Pricing: AWS data transfer out, us-east-1 (tiered)." : "Pricing: custom tiers.");
+  const model = getModel(pricing.model);
+  lines.push(
+    `Pricing: ${model.scope}, tiered per month, free tier ${pricing.freeTier ? `applied (${activeRates(pricing).freeGB.toLocaleString("en-US")} GB)` : "not applied"}. ${
+      isCustom(pricing) ? "Using custom rates entered by the user, not AWS's published defaults." : `AWS rates verified ${model.lastVerified}.`
+    } Estimate only.`,
+  );
   lines.push(
     paged
       ? "Monthly data = sessions × pages per session × average page size (1 GB = 10^9 bytes)."

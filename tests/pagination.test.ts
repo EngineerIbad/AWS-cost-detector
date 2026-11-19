@@ -17,7 +17,7 @@ import {
   stopReason,
   type NextInput,
 } from "../lib/pagination";
-import { getDefaultPricing, monthlyCostForBytes } from "../lib/pricing";
+import { DEFAULT_PRICING, monthlyCostForBytes } from "../lib/pricing";
 import { samplePages, type FetchedPage } from "../lib/sampler";
 import type { AnalysisResult } from "../lib/types";
 
@@ -156,7 +156,7 @@ describe("session math", () => {
     const bytes = sessionEgressBytes(1_000_000, 5, 50_000);
     expect(bytes).toBe(250e9);
     // (250 − 100 free) × $0.09
-    expect(Math.round(monthlyCostForBytes(bytes, getDefaultPricing()) * 100) / 100).toBe(13.5);
+    expect(Math.round(monthlyCostForBytes(bytes, DEFAULT_PRICING) * 100) / 100).toBe(13.5);
   });
 
   it("cost rows use the average sampled page size", () => {
@@ -191,12 +191,12 @@ describe("session math", () => {
     } as unknown as AnalysisResult;
     a.pagination!.pages = [{ page: 1, status: 200, items: 10, wireBytes: 50_000, rawBytes: 50_000, minifiedBytes: 50_000, gzipBytes: 10_000, brotliBytes: 9_000, zstdBytes: 9_500 }];
 
-    const s = computeCosts(a, pageRequests(1_000_000, 5), getDefaultPricing(), true);
+    const s = computeCosts(a, pageRequests(1_000_000, 5), DEFAULT_PRICING, true);
     expect(s.today.bytes).toBe(50_000);
     expect(s.today.monthlyBytes).toBe(250e9);
     expect(Math.round(s.today.monthlyCost * 100) / 100).toBe(13.5);
     // Without pagination, page 1 sizes are used as before.
-    expect(computeCosts(a, 5_000_000, getDefaultPricing(), false).today.bytes).toBe(40_000);
+    expect(computeCosts(a, 5_000_000, DEFAULT_PRICING, false).today.bytes).toBe(40_000);
   });
 
   it("measures how much page sizes vary", () => {

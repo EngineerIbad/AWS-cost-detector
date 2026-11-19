@@ -5,7 +5,9 @@
  * - every resolved address is vetted; if ANY is private/reserved we refuse
  * - the socket connects to the vetted IP via a custom `lookup` (no DNS rebinding)
  *   while Host header and TLS SNI keep the original hostname
- * - no redirects, no retries, 10 s deadline, 5 MB response cap, 100 KB request body cap
+ * - no retries, 10 s deadline, 5 MB response cap, 100 KB request body cap
+ * - `safeFetchFollow` follows up to 3 redirects; every hop goes back through
+ *   `safeFetch`, so scheme, port, DNS and IP checks run again for each one
  *
  * Nothing in this module logs. Errors never echo headers, tokens or bodies.
  */
@@ -15,6 +17,7 @@ import https from "node:https";
 import net from "node:net";
 import type { LookupFunction } from "node:net";
 import { isBlockedAddress } from "./ip";
+import { stripSensitiveHeaders } from "./redact";
 import type { ErrorField } from "./types";
 
 export const ALLOWED_PORTS = new Set([80, 443, 8080, 8443]);
@@ -22,6 +25,8 @@ export const ALLOWED_METHODS = new Set(["GET", "POST", "PUT", "PATCH"]);
 export const TIMEOUT_MS = 10_000;
 export const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
 export const MAX_REQUEST_BODY_BYTES = 100 * 1024;
+export const MAX_REDIRECTS = 3;
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 export class SafeFetchError extends Error {
   constructor(
@@ -162,6 +167,8 @@ export interface SafeRequest {
   headers: Record<string, string>;
   body?: string;
   acceptEncoding: string;
+  /** Absolute deadline (ms epoch). Defaults to now + TIMEOUT_MS. Shared across redirect hops. */
+  deadline?: number;
 }
 
 export interface SafeResponse {
@@ -196,7 +203,7 @@ export function sanitizeRequestHeaders(headers: Record<string, string>): Record<
 
 /** Perform exactly one outbound request. No retries, no redirects. */
 export async function safeFetch(req: SafeRequest): Promise<SafeResponse> {
-  const deadline = Date.now() + TIMEOUT_MS;
+  const deadline = req.deadline ?? Date.now() + TIMEOUT_MS;
   const method = req.method.toUpperCase();
   if (!ALLOWED_METHODS.has(method)) {
     throw new SafeFetchError("bad_method", `${method} isn't supported. Use GET, POST, PUT or PATCH.`, "method");
@@ -314,4 +321,66 @@ export async function safeFetch(req: SafeRequest): Promise<SafeResponse> {
     if (bodyBuf) request.write(bodyBuf);
     request.end();
   });
+}
+
+export interface FollowedResponse extends SafeResponse {
+  /** URL of the response that was returned (after any redirects). Server-side only. */
+  finalUrl: string;
+  redirects: number;
+}
+
+/**
+ * Like `safeFetch`, but follows up to `maxRedirects` redirects (http/https only).
+ * Each hop is a fresh `safeFetch`, so the target is re-validated and DNS is
+ * re-resolved and re-checked against blocked ranges before connecting.
+ * Sensitive headers (Authorization, Cookie, API keys, ...) are dropped as soon
+ * as a redirect leaves the original origin. One deadline covers all hops.
+ * If the chain is longer than the limit, the last 3xx response is returned.
+ */
+export async function safeFetchFollow(
+  req: SafeRequest,
+  maxRedirects = MAX_REDIRECTS,
+  /** Injected in tests only. Production always uses `safeFetch`. */
+  fetchOnce: (r: SafeRequest) => Promise<SafeResponse> = safeFetch,
+): Promise<FollowedResponse> {
+  const deadline = req.deadline ?? Date.now() + TIMEOUT_MS;
+  let originalOrigin = "";
+  try {
+    originalOrigin = new URL(req.url).origin;
+  } catch {
+    /* invalid URL: the first safeFetch rejects it with a friendly error */
+  }
+  let cur: SafeRequest = { ...req, deadline };
+  for (let hop = 0; ; hop++) {
+    let res: SafeResponse;
+    try {
+      res = await fetchOnce(cur);
+    } catch (e) {
+      if (hop > 0 && e instanceof SafeFetchError && e.code !== "timeout" && e.code !== "network") {
+        throw new SafeFetchError(e.code, `The API redirected somewhere we can't fetch. ${e.message}`, e.field, e.httpStatus);
+      }
+      throw e;
+    }
+    if (!REDIRECT_STATUSES.has(res.status) || !res.location || hop >= maxRedirects) {
+      return { ...res, finalUrl: cur.url, redirects: hop };
+    }
+    let next: URL;
+    try {
+      next = new URL(res.location, cur.url);
+    } catch {
+      return { ...res, finalUrl: cur.url, redirects: hop };
+    }
+    if (next.protocol !== "http:" && next.protocol !== "https:") {
+      throw new SafeFetchError("bad_scheme", "The API redirected to a non-HTTP URL, so we stopped.");
+    }
+    let { method, body, headers } = cur;
+    // Same rules as browsers and curl -L: 303 always becomes GET; 301/302 turn POST into GET.
+    if (res.status === 303 || ((res.status === 301 || res.status === 302) && method !== "GET")) {
+      method = "GET";
+      body = undefined;
+      headers = Object.fromEntries(Object.entries(headers).filter(([k]) => k.toLowerCase() !== "content-type"));
+    }
+    if (next.origin !== originalOrigin) headers = stripSensitiveHeaders(headers);
+    cur = { ...cur, url: next.toString(), method, body, headers };
+  }
 }

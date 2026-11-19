@@ -13,19 +13,12 @@ import {
   PAGINATION_PARAMS,
   pageRequests,
 } from "../lib/pagination";
-import {
-  decodeTiers,
-  encodeTiers,
-  getDefaultPricing,
-  isDefaultPricing,
-  pricingToDraft,
-  validatePricing,
-  type Pricing,
-  type PricingDraft,
-} from "../lib/pricing";
+import { decodeRates, DEFAULT_PRICING, encodeRates, isPricingModelId, type ModelRates, type PricingModelId, type PricingOptions } from "../lib/pricing";
+import { sharePath, shareStateFromResult } from "../lib/share";
 import type { AnalysisResult, ApiError, ErrorField } from "../lib/types";
 import PricingPanel from "./PricingPanel";
 import Results from "./Results";
+import SiteFooter from "./SiteFooter";
 
 type Tab = "curl" | "form" | "demo";
 const TABS: { id: Tab; label: string }[] = [
@@ -44,7 +37,9 @@ const MAX_BODY_BYTES = 100 * 1024;
 const LS = {
   tab: "aecc:tab",
   requests: "aecc:requests",
-  pricing: "aecc:pricing",
+  model: "aecc:model",
+  freeTier: "aecc:freeTier",
+  rates: "aecc:customRates",
   paginated: "aecc:paginated",
   pps: "aecc:pagesPerSession",
   sessions: "aecc:sessions",
@@ -66,7 +61,9 @@ function lsSet(key: string, value: string | null) {
   }
 }
 
-type Errors = Partial<Record<ErrorField | "requests" | "sessions" | "pps", string>>;
+type CustomRatesMap = Partial<Record<PricingModelId, ModelRates>>;
+
+type Errors =Partial<Record<ErrorField | "requests" | "sessions" | "pps", string>>;
 
 /** Pre-computed demo analyses. `socialPaged` is the social feed as 5 cursor pages. */
 export type DemoResults = Record<DemoId, AnalysisResult> & { socialPaged: AnalysisResult };
@@ -139,17 +136,17 @@ export default function App({ demoResults }: Props) {
   const [sessions, setSessions] = useState(DEFAULT_SESSIONS);
   const [sessionsText, setSessionsText] = useState(formatNumber(DEFAULT_SESSIONS));
   const lastDetected = useRef<string | null>(null);
-  const [draft, setDraft] = useState<PricingDraft>(() => pricingToDraft(getDefaultPricing()));
-  const lastValid = useRef<Pricing>(getDefaultPricing());
+  const [pricingBase, setPricingBase] = useState<Pick<PricingOptions, "model" | "freeTier">>(DEFAULT_PRICING);
+  /** Visitor-entered rates, kept per model so switching models doesn't lose them. */
+  const [customRates, setCustomRates] = useState<CustomRatesMap>({});
+  const pricing: PricingOptions = useMemo(
+    () => ({ ...pricingBase, custom: customRates[pricingBase.model] ?? null }),
+    [pricingBase, customRates],
+  );
   const [hydrated, setHydrated] = useState(false);
   const [shareMsg, setShareMsg] = useState("");
 
-  const validation = useMemo(() => validatePricing(draft), [draft]);
-  if (validation.ok && validation.pricing) lastValid.current = validation.pricing;
-  const pricing = validation.ok && validation.pricing ? validation.pricing : lastValid.current;
-  const usingDefaults = validation.ok && !!validation.pricing && isDefaultPricing(validation.pricing);
-
-  /* ---------- restore state: share URL > localStorage > defaults ---------- */
+  /* ---------- restore state: legacy URL params > localStorage > defaults ---------- */
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const storedTab = lsGet(LS.tab);
@@ -177,25 +174,25 @@ export default function App({ demoResults }: Props) {
       setSessionsText(formatNumber(sN));
     }
 
-    let restored: Pricing | null = null;
-    const p = params.get("p");
-    if (p) {
-      const tiers = decodeTiers(p);
-      const c = (params.get("c") ?? "USD").slice(0, 8).trim() || "USD";
-      if (tiers) restored = { currency: c, tiers };
-    } else {
-      const stored = lsGet(LS.pricing);
-      if (stored) {
-        try {
-          const parsed = JSON.parse(stored) as Pricing;
-          const v = validatePricing(pricingToDraft(parsed));
-          if (v.ok && v.pricing) restored = v.pricing;
-        } catch {
-          /* ignore corrupt storage */
-        }
+    // Old ?p= (custom tier) links are ignored.
+    const m = lsGet(LS.model);
+    const ft = lsGet(LS.freeTier);
+    setPricingBase({
+      model: isPricingModelId(m) ? m : DEFAULT_PRICING.model,
+      freeTier: ft === "0" ? false : ft === "1" ? true : DEFAULT_PRICING.freeTier,
+    });
+    // Saved custom rates, stored as share-link strings and re-validated on load.
+    try {
+      const saved = JSON.parse(lsGet(LS.rates) ?? "{}") as Record<string, unknown>;
+      const restored: CustomRatesMap = {};
+      for (const [id, enc] of Object.entries(saved)) {
+        const r = isPricingModelId(id) && typeof enc === "string" ? decodeRates(enc) : null;
+        if (r && isPricingModelId(id)) restored[id] = r;
       }
+      setCustomRates(restored);
+    } catch {
+      /* ignore corrupt storage */
     }
-    if (restored) setDraft(pricingToDraft(restored));
     setHydrated(true);
   }, []);
 
@@ -212,9 +209,16 @@ export default function App({ demoResults }: Props) {
     lsSet(LS.sessions, String(sessions));
   }, [paginated, pps, sessions, hydrated]);
   useEffect(() => {
-    if (!hydrated || !validation.ok || !validation.pricing) return;
-    lsSet(LS.pricing, isDefaultPricing(validation.pricing) ? null : JSON.stringify(validation.pricing));
-  }, [validation, hydrated]);
+    if (!hydrated) return;
+    lsSet(LS.model, pricingBase.model);
+    lsSet(LS.freeTier, pricingBase.freeTier ? "1" : "0");
+  }, [pricingBase, hydrated]);
+  useEffect(() => {
+    if (!hydrated) return;
+    const out: Record<string, string> = {};
+    for (const [id, r] of Object.entries(customRates)) if (r) out[id] = encodeRates(r);
+    lsSet(LS.rates, Object.keys(out).length ? JSON.stringify(out) : null);
+  }, [customRates, hydrated]);
 
   /* ------------------------ pagination detection ------------------------ */
   const activeUrl = useMemo(() => {
@@ -433,28 +437,27 @@ export default function App({ demoResults }: Props) {
   /** What the cost table multiplies by: requests, or sessions × pages per session. */
   const effectiveRequests = paginated ? pageReqs : requests;
 
+  /**
+   * Share link to /s: sizes, traffic and pricing only (see lib/share.ts).
+   * Never the curl command, URL, headers, cookies, tokens or body.
+   */
   async function share() {
-    const params = new URLSearchParams();
-    params.set("r", String(requests));
-    params.set("pg", paginated ? "1" : "0");
-    params.set("pps", String(pps));
-    params.set("s", String(sessions));
-    params.set("p", encodeTiers(pricing.tiers));
-    if (pricing.currency !== "USD") params.set("c", pricing.currency);
-    const link = `${window.location.origin}${window.location.pathname}?${params.toString()}`;
-    try {
-      window.history.replaceState(null, "", `?${params.toString()}`);
-    } catch {
-      /* ignore */
-    }
+    if (!displayed || displayed.rawBytes === 0) return;
+    const state = shareStateFromResult(displayed, {
+      requests: effectiveRequests,
+      paging: paginated ? { sessions, pagesPerSession: pps } : null,
+      pricing,
+    });
+    const link = `${window.location.origin}${sharePath(state)}`;
     try {
       await navigator.clipboard.writeText(link);
-      setShareMsg("Link copied. It includes your traffic and pricing, not the API you tested.");
+      setShareMsg("Link copied. It shares sizes, traffic and pricing only, never your URL, headers or response.");
     } catch {
-      setShareMsg("The link is now in your address bar. Copy it from there.");
+      window.prompt("Copy this link. It shares sizes, traffic and pricing only:", link);
+      setShareMsg("");
     }
     setAnnounce("Share link ready.");
-    setTimeout(() => setShareMsg(""), 5000);
+    setTimeout(() => setShareMsg(""), 6000);
   }
 
   const currentDemo = DEMOS.find((d) => d.id === demoId);
@@ -887,11 +890,13 @@ export default function App({ demoResults }: Props) {
           </div>
 
           <PricingPanel
-            draft={draft}
-            setDraft={setDraft}
-            validation={validation}
-            usingDefaults={usingDefaults}
+            step={3}
+            pricing={pricing}
+            onChange={setPricingBase}
+            onRatesChange={(r) => setCustomRates((m) => ({ ...m, [pricingBase.model]: r ?? undefined }))}
+            editorKey={hydrated ? "ready" : "init"}
             onShare={share}
+            shareDisabled={!displayed || displayed.rawBytes === 0}
             shareMsg={shareMsg}
           />
         </section>
@@ -904,7 +909,6 @@ export default function App({ demoResults }: Props) {
             requests={effectiveRequests}
             paging={paginated ? { sessions, pagesPerSession: pps } : null}
             pricing={pricing}
-            usingDefaults={usingDefaults}
             animate={resultKey > 0}
           />
         </section>
@@ -914,19 +918,7 @@ export default function App({ demoResults }: Props) {
         {announce}
       </div>
 
-      <footer className="footer">
-        <p>
-          Built by Ibad Amir · Senior Software Engineer ·{" "}
-          <a href="https://www.linkedin.com/in/engineer-ibad" target="_blank" rel="noopener noreferrer">
-            LinkedIn
-          </a>{" "}
-          ·{" "}
-          <a href="https://ibadamir.vercel.app" target="_blank" rel="noopener noreferrer">
-            ibadamir.vercel.app
-          </a>
-        </p>
-        <p className="footer-small">Estimates only. Not affiliated with Amazon Web Services.</p>
-      </footer>
+      <SiteFooter />
     </div>
   );
 }
@@ -951,7 +943,10 @@ function PrivacyNote({ id }: { id: string }) {
         <rect x="3" y="7" width="10" height="7" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
         <path d="M5.5 7V5a2.5 2.5 0 015 0v2" fill="none" stroke="currentColor" strokeWidth="1.5" />
       </svg>
-      Sent once from our server, never stored. Use a test token if you can.
+      <span>
+        Your request runs once on our server to measure the response. The body is never stored, and only its sizes and a 500-character preview come back to your browser. Sensitive headers (Authorization,
+        Cookie, API keys) are never logged. Tip: use a staging endpoint or Demo mode.
+      </span>
     </p>
   );
 }
@@ -982,8 +977,8 @@ function CurlTips() {
           <strong>Tips</strong>
           <span>In Chrome DevTools → Network, right-click a request → Copy → Copy as cURL (bash).</span>
           <span>Supported: -X, -H, -d / --data-raw / --data-binary / --json, -u. Multi-line commands with \ are fine.</span>
-          <span>Ignored: --compressed, -L, -k, -s, -i, -v. We set Accept-Encoding ourselves.</span>
-          <span>Redirects aren&apos;t followed. Use the final URL.</span>
+          <span>Ignored: --compressed, -L, -k, -s, -i, -v (redirects are always followed, up to 3). We set Accept-Encoding ourselves.</span>
+          <span>Up to 3 redirects are followed, and each one is re-checked. Credentials are dropped if a redirect leaves the original site.</span>
         </span>
       )}
     </span>

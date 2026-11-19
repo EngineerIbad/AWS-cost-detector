@@ -1,7 +1,8 @@
 import { analyzeBody, acceptEncodingHeader, decodeBody, DecodeError, encodeAs } from "../../../lib/analyze";
 import { CurlParseError, normalizeUrl, parseCurl, type ParsedRequest } from "../../../lib/curl";
 import { clientIp, rateLimit } from "../../../lib/rateLimit";
-import { MAX_REQUEST_BODY_BYTES, safeFetch, SafeFetchError } from "../../../lib/safeFetch";
+import { logSafeError } from "../../../lib/redact";
+import { MAX_REQUEST_BODY_BYTES, safeFetchFollow, SafeFetchError, TIMEOUT_MS } from "../../../lib/safeFetch";
 import { isValidParamName } from "../../../lib/pagination";
 import { samplePages } from "../../../lib/sampler";
 import type { ApiError, ErrorField, PaginationResult } from "../../../lib/types";
@@ -27,11 +28,22 @@ type Body =
   | { mode: "request"; method: string; url: string; headers?: Record<string, string>; body?: string; pagination?: PaginationInput }
   | { mode: "payload"; json: string; servedAs?: "identity" | "gzip" | "br" };
 
+/*
+ * Privacy rules for this handler (see README "Privacy"):
+ * - The request (curl, URL, headers, body) and the response body are held in
+ *   memory for this one invocation only. Nothing is written to disk, a
+ *   database, a cache or analytics.
+ * - Never log request or response data. The only log call is logSafeError,
+ *   which prints the error class and code, never messages, URLs or headers.
+ * - The browser gets sizes, allow-listed response headers and a 500-character
+ *   preview, never the full body.
+ */
 export async function POST(request: Request) {
-  // NOTE: never log anything from the request or response in this handler.
   const limit = rateLimit(clientIp(request.headers));
   if (!limit.ok) {
-    return err(429, "rate_limited", `You've hit the limit of 10 analyses per minute. Try again in ${limit.retryAfterSec}s.`, "general", {
+    const what = limit.windowMs >= 3_600_000 ? "60 analyses per hour" : "10 analyses per minute";
+    const wait = limit.retryAfterSec >= 120 ? `${Math.ceil(limit.retryAfterSec / 60)} minutes` : `${limit.retryAfterSec}s`;
+    return err(429, "rate_limited", `You've hit the limit of ${what}. Try again in ${wait}, or use Demo mode.`, "general", {
       "Retry-After": String(limit.retryAfterSec),
     });
   }
@@ -113,13 +125,15 @@ export async function POST(request: Request) {
       paginationParam = param;
     }
 
-    const res = await safeFetch({ ...req, acceptEncoding: acceptEncodingHeader() });
+    // Follows up to 3 redirects; every hop is re-validated (scheme, port, DNS, IP ranges).
+    const res = await safeFetchFollow({ ...req, acceptEncoding: acceptEncodingHeader() });
 
+    // Only set when the final response is still a redirect (chain too long, or no Location).
     let redirectTo: string | null = null;
     if (res.status >= 300 && res.status < 400) {
       if (res.location) {
         try {
-          redirectTo = new URL(res.location, req.url).toString().slice(0, 300);
+          redirectTo = new URL(res.location, res.finalUrl).toString().slice(0, 300);
         } catch {
           redirectTo = res.location.slice(0, 300);
         }
@@ -140,7 +154,7 @@ export async function POST(request: Request) {
         firstPage: { status: res.status, raw, wireBytes: res.wire.length, contentType: res.contentType, link: res.link },
         fetchPage: async (url) => {
           try {
-            const r = await safeFetch({ ...req, url, acceptEncoding: acceptEncodingHeader() });
+            const r = await safeFetchFollow({ ...req, url, acceptEncoding: acceptEncodingHeader(), deadline: Date.now() + TIMEOUT_MS });
             return { status: r.status, raw: decodeBody(r.wire, r.contentEncoding), wireBytes: r.wire.length, contentType: r.contentType };
           } catch (e) {
             if (e instanceof SafeFetchError || e instanceof DecodeError) return { error: e.message };
@@ -171,6 +185,7 @@ export async function POST(request: Request) {
       return err(e.httpStatus, e.code, e.message, f);
     }
     if (e instanceof DecodeError) return err(502, "decode_failed", e.message, field);
+    logSafeError("analyze", e);
     return err(500, "internal", "Something went wrong on our side. Please try again.", field);
   }
 }

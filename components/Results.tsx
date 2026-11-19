@@ -4,15 +4,15 @@ import { useMemo, useState } from "react";
 import { buildCopySummary, computeCosts, effectiveSizes, type CostRow, type SessionTraffic } from "../lib/costs";
 import { formatBytes, formatMoney, formatNumber, formatRatio } from "../lib/format";
 import { MAX_SAMPLED_PAGES } from "../lib/pagination";
-import type { Pricing } from "../lib/pricing";
+import { CURRENCY, type PricingOptions } from "../lib/pricing";
+import AssumptionsPanel from "./AssumptionsPanel";
 import type { AnalysisResult, Finding, PaginationResult, Severity } from "../lib/types";
 
 interface Props {
   result: AnalysisResult | null;
   label: string;
   requests: number;
-  pricing: Pricing;
-  usingDefaults: boolean;
+  pricing: PricingOptions;
   animate?: boolean;
   /** Set when pagination is on: requests = sessions × pages per session. */
   paging?: SessionTraffic | null;
@@ -24,7 +24,7 @@ const VARIATION_THRESHOLD = 0.3;
 const SEV_ORDER: Record<Severity, number> = { high: 0, medium: 1, info: 2 };
 const SEV_LABEL: Record<Severity, string> = { high: "High", medium: "Medium", info: "Info" };
 
-export default function Results({ result, label, requests, pricing, usingDefaults, animate = false, paging = null }: Props) {
+export default function Results({ result, label, requests, pricing, animate = false, paging = null }: Props) {
   const [copied, setCopied] = useState("");
   const paged = !!paging;
   const summary = useMemo(() => (result ? computeCosts(result, requests, pricing, paged) : null), [result, requests, pricing, paged]);
@@ -38,17 +38,19 @@ export default function Results({ result, label, requests, pricing, usingDefault
     );
   }
 
-  const cur = pricing.currency;
+  const cur = CURRENCY;
+  const shared = result.source === "shared";
   const a = result;
   const findings = [...a.findings].sort((x, y) => SEV_ORDER[x.severity] - SEV_ORDER[y.severity]);
   const statusOk = a.status === null || (a.status >= 200 && a.status < 300);
   const sizes = effectiveSizes(a, paged);
-  const sampled = a.pagination?.pages.length ?? 1;
+  const sampled = a.pagination?.pages.length ?? a.sampledPages ?? 1;
   const unit = paged ? "page" : "response";
 
   async function copy() {
-    const link = typeof window !== "undefined" ? window.location.origin : undefined;
-    const text = buildCopySummary(a, summary!, requests, pricing, usingDefaults, link, paging);
+    // On a shared page, point at the share link itself; otherwise at the calculator.
+    const link = typeof window !== "undefined" ? (shared ? window.location.href : window.location.origin) : undefined;
+    const text = buildCopySummary(a, summary!, requests, pricing, link, paging);
     try {
       await navigator.clipboard.writeText(text);
       setCopied("Copied. Paste it into Slack, an issue or a post.");
@@ -130,7 +132,9 @@ export default function Results({ result, label, requests, pricing, usingDefault
             )}
           </div>
 
-          {paging && <PagesSampled pagination={a.pagination ?? null} source={a.source} />}
+          <AssumptionsPanel pricing={pricing} paged={paged} />
+
+          {paging && !shared && <PagesSampled pagination={a.pagination ?? null} source={a.source} />}
 
           <div className="card">
             <h3 className="card-title">Size comparison</h3>
@@ -142,6 +146,8 @@ export default function Results({ result, label, requests, pricing, usingDefault
         </>
       )}
 
+      {!shared && (
+      <>
       <div className="card">
         <h3 className="card-title">Recommendations</h3>
         {findings.length === 0 ? (
@@ -187,6 +193,8 @@ export default function Results({ result, label, requests, pricing, usingDefault
           <p className="hint">Only non-sensitive headers are shown. Cookies are never returned.</p>
         </details>
       </div>
+      </>
+      )}
     </div>
   );
 }

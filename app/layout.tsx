@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Poppins } from "next/font/google";
+import { siteDescription, siteTitle, siteUrl } from "../lib/site";
 import "./globals.css";
 
 const poppins = Poppins({
@@ -9,18 +10,12 @@ const poppins = Poppins({
   variable: "--font-poppins",
 });
 
-const siteUrl =
-  process.env.NEXT_PUBLIC_SITE_URL ??
-  (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "http://localhost:3000");
-
-const title = "API Egress Cost Calculator";
-const description =
-  "Paste an endpoint, see your AWS data transfer bill, and what Gzip, Brotli and Zstd compression would save.";
+const title = siteTitle;
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: { default: `${title} · How much does your API response really cost?`, template: `%s · ${title}` },
-  description,
+  description: siteDescription,
   applicationName: title,
   authors: [{ name: "Ibad Amir", url: "https://ibadamir.vercel.app" }],
   creator: "Ibad Amir",
@@ -30,13 +25,15 @@ export const metadata: Metadata = {
     url: "/",
     siteName: title,
     title: "How much does your API response really cost?",
-    description,
+    description: siteDescription,
     locale: "en_US",
+    images: [{ url: "/api/og", width: 1200, height: 630, alt: "API Egress Cost Calculator: how much does your API response really cost?" }],
   },
   twitter: {
     card: "summary_large_image",
     title: "How much does your API response really cost?",
-    description,
+    description: siteDescription,
+    images: ["/api/og"],
   },
 };
 

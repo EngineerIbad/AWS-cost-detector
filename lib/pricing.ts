@@ -1,60 +1,137 @@
 /**
- * Pricing model for AWS data transfer out (egress) to the internet.
+ * Pricing models: the single source of truth for every price in the app.
  *
- * Tiers are cumulative per month: each GB is billed at the rate of the tier
- * it falls into. A tier runs from the previous tier's upper limit to its own
- * `upToGB` (null = unlimited). The last tier must be unlimited.
+ * Nothing else may hardcode a rate, a tier limit or a free allowance. The UI
+ * (assumptions panel, selector labels, free-tier toggle), cost rows, copy text,
+ * share previews and tests all read from here.
+ *
+ * Tier limits are cumulative monthly usage in GB (1 GB = 10^9 bytes). Each GB is
+ * billed at the rate of the tier it falls into (marginal, not one flat rate).
+ * The free allowance is separate from the tiers: when applied, the first
+ * `freeGB` of the month cost $0 and billing continues at whatever tier the
+ * cumulative usage is in.
+ *
+ * To update: edit the numbers, bump `lastVerified`, and re-check `source`.
+ *
+ * Visitors can also override a model's rates in the UI ("Edit rates") if AWS
+ * changes prices before this file is updated. Overrides travel as
+ * `PricingOptions.custom` and are always labelled "custom rates".
  */
 
-export const BYTES_PER_GB = 1_000_000_000; // decimal GB, as AWS bills
+export const BYTES_PER_GB = 1_000_000_000; // decimal GB
+export const CURRENCY = "USD";
 
 export interface PricingTier {
-  /** Upper limit of this tier in GB per month. `null` = no upper limit. */
+  /** Upper limit of this tier in cumulative GB per month. `null` = no upper limit. */
   upToGB: number | null;
   pricePerGB: number;
 }
 
-export interface Pricing {
-  currency: string;
+export type PricingModelId = "direct" | "cloudfront";
+
+export interface PricingModel {
+  id: PricingModelId;
+  /** Selector label. */
+  label: string;
+  /** Short label for badges, copy text and share previews. */
+  shortLabel: string;
+  /** What the tier table covers. */
+  scope: string;
+  /** Monthly free allowance in GB (only applied when the free tier toggle is on). */
+  freeGB: number;
+  freeNote: string;
+  tiers: PricingTier[];
+  source: string;
+  /** ISO date (YYYY-MM-DD) the rates were last checked against `source`. */
+  lastVerified: string;
+}
+
+export const PRICING_MODELS: Record<PricingModelId, PricingModel> = {
+  direct: {
+    id: "direct",
+    label: "Direct from AWS region (EC2 / ALB / API Gateway)",
+    shortLabel: "Direct from us-east-1",
+    scope: "AWS data transfer out to the internet, us-east-1",
+    freeGB: 100,
+    freeNote: "100 GB/month free, aggregated across all AWS services and regions in your account.",
+    tiers: [
+      { upToGB: 10_000, pricePerGB: 0.09 }, //       0 – 10 TB
+      { upToGB: 50_000, pricePerGB: 0.085 }, //  10 TB – 50 TB
+      { upToGB: 150_000, pricePerGB: 0.07 }, //  50 TB – 150 TB
+      { upToGB: null, pricePerGB: 0.05 }, //      150 TB +
+    ],
+    source: "https://aws.amazon.com/ec2/pricing/on-demand/#Data_Transfer",
+    lastVerified: "2026-11-16",
+  },
+  cloudfront: {
+    id: "cloudfront",
+    label: "Via CloudFront",
+    shortLabel: "Via CloudFront",
+    scope: "Amazon CloudFront data transfer out to the internet, North America / Europe, pay-as-you-go",
+    freeGB: 1_000,
+    freeNote: "1 TB/month free (CloudFront always-free tier, per AWS account).",
+    // Verified 2026-11-20 against the pay-as-you-go page: "First 1TB Free,
+    // Next 9TB $0.085, Next 40TB $0.080, Next 100TB $0.060, Next 350TB $0.040,
+    // Next 524TB $0.030, Next 4PB $0.025, Over 5PB $0.020" (US/MX/CA and
+    // Europe/Israel/Türkiye). Limits below are those "next X TB" steps added up
+    // with 1 TB = 1,000 GB, matching how this app counts GB.
+    tiers: [
+      { upToGB: 10_000, pricePerGB: 0.085 }, //     0 – 10 TB (first 1 TB covered by freeGB)
+      { upToGB: 50_000, pricePerGB: 0.08 }, //   10 TB – 50 TB
+      { upToGB: 150_000, pricePerGB: 0.06 }, //  50 TB – 150 TB
+      { upToGB: 500_000, pricePerGB: 0.04 }, // 150 TB – 500 TB
+      { upToGB: 1_024_000, pricePerGB: 0.03 }, // 500 TB – 1,024 TB
+      { upToGB: 5_120_000, pricePerGB: 0.025 }, // next 4 PB
+      { upToGB: null, pricePerGB: 0.02 }, //       over 5 PB
+    ],
+    source: "https://aws.amazon.com/cloudfront/pricing/pay-as-you-go/",
+    lastVerified: "2026-11-20",
+  },
+};
+
+export const DEFAULT_MODEL: PricingModelId = "direct";
+export const DEFAULT_FREE_TIER = true;
+
+export const FREE_TIER_HELP = "The free tier is shared across your whole AWS account, so other traffic may already use it.";
+export const CLOUDFRONT_NOTE = "Origin → CloudFront transfer is free. CloudFront also charges per request, which this tool doesn't include.";
+
+/** The numbers a cost calculation uses: a free allowance and the paid tiers. */
+export interface ModelRates {
+  freeGB: number;
   tiers: PricingTier[];
 }
 
-/**
- * To update defaults: edit the tiers below, bump `lastVerified`, and check the
- * source page. Everything else (badge, reset button, tests) reads from here.
- */
-export const defaultPricing = {
-  currency: "USD",
-  lastVerified: "2026-11-16",
-  region: "us-east-1",
-  source:
-    "https://aws.amazon.com/ec2/pricing/on-demand/#Data_Transfer",
-  tiers: [
-    { upToGB: 100, pricePerGB: 0 }, //          0 – 100 GB  free
-    { upToGB: 10_000, pricePerGB: 0.09 }, //  100 GB – 10 TB
-    { upToGB: 50_000, pricePerGB: 0.085 }, //  10 TB – 50 TB
-    { upToGB: 150_000, pricePerGB: 0.07 }, //  50 TB – 150 TB
-    { upToGB: null, pricePerGB: 0.05 }, //    150 TB +
-  ] as PricingTier[],
-} as const;
-
-export function getDefaultPricing(): Pricing {
-  return {
-    currency: defaultPricing.currency,
-    tiers: defaultPricing.tiers.map((t) => ({ ...t })),
-  };
+/** What a cost calculation needs: which model, whether to subtract the free allowance, and any user override. */
+export interface PricingOptions {
+  model: PricingModelId;
+  freeTier: boolean;
+  /** Visitor-entered rates for `model`. Null/undefined = the AWS defaults above. */
+  custom?: ModelRates | null;
 }
 
-/** Monthly cost for a given number of GB, applying tiers cumulatively. */
-export function tieredCost(gb: number, tiers: PricingTier[]): number {
+export const DEFAULT_PRICING: PricingOptions = { model: DEFAULT_MODEL, freeTier: DEFAULT_FREE_TIER };
+
+export function isPricingModelId(v: unknown): v is PricingModelId {
+  return v === "direct" || v === "cloudfront";
+}
+
+export function getModel(id: PricingModelId): PricingModel {
+  return PRICING_MODELS[id];
+}
+
+/**
+ * Monthly cost for `gb` of cumulative usage. Each GB is billed at the rate of
+ * the tier it falls in; the first `freeGB` are free.
+ */
+export function tieredCost(gb: number, tiers: PricingTier[], freeGB = 0): number {
   if (!(gb > 0)) return 0;
   let cost = 0;
   let from = 0;
   for (const tier of tiers) {
-    const to = tier.upToGB ?? Infinity;
     if (gb <= from) break;
-    const inTier = Math.min(gb, to) - from;
-    if (inTier > 0) cost += inTier * tier.pricePerGB;
+    const to = tier.upToGB ?? Infinity;
+    const billable = Math.min(gb, to) - Math.max(from, freeGB);
+    if (billable > 0) cost += billable * tier.pricePerGB;
     from = to;
   }
   return cost;
@@ -64,152 +141,173 @@ export function bytesToGB(bytes: number): number {
   return bytes / BYTES_PER_GB;
 }
 
-export function monthlyCostForBytes(bytes: number, pricing: Pricing): number {
-  return tieredCost(bytesToGB(bytes), pricing.tiers);
+/** Monthly cost in USD for `bytes` of monthly egress under the given options. */
+export function monthlyCostForBytes(bytes: number, opts: PricingOptions): number {
+  const r = activeRates(opts);
+  return tieredCost(bytesToGB(bytes), r.tiers, opts.freeTier ? r.freeGB : 0);
 }
 
-export function isDefaultPricing(p: Pricing): boolean {
-  const d = defaultPricing;
-  if (p.currency !== d.currency) return false;
-  if (p.tiers.length !== d.tiers.length) return false;
-  return p.tiers.every(
-    (t, i) =>
-      t.upToGB === d.tiers[i].upToGB && t.pricePerGB === d.tiers[i].pricePerGB,
+export function defaultRates(id: PricingModelId): ModelRates {
+  const m = getModel(id);
+  return { freeGB: m.freeGB, tiers: m.tiers.map((t) => ({ ...t })) };
+}
+
+/** The rates actually in effect: the user's override, or the AWS defaults. */
+export function activeRates(opts: PricingOptions): ModelRates {
+  return opts.custom ?? defaultRates(opts.model);
+}
+
+export function ratesEqual(a: ModelRates, b: ModelRates): boolean {
+  return (
+    a.freeGB === b.freeGB &&
+    a.tiers.length === b.tiers.length &&
+    a.tiers.every((t, i) => t.upToGB === b.tiers[i].upToGB && t.pricePerGB === b.tiers[i].pricePerGB)
   );
 }
 
+/** True when the user's rates differ from the AWS defaults for the selected model. */
+export function isCustom(opts: PricingOptions): boolean {
+  return !!opts.custom && !ratesEqual(opts.custom, defaultRates(opts.model));
+}
+
+/** "16 Nov 2026" */
+export function formatVerifiedDate(iso: string): string {
+  const d = new Date(iso + "T00:00:00Z");
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+}
+
+/** "100 GB" / "1 TB" */
+export function formatGB(gb: number): string {
+  if (gb >= 1_000_000 && gb % 1_000_000 === 0) return `${gb / 1_000_000} PB`;
+  if (gb >= 1_000 && gb % 1_000 === 0) return `${(gb / 1_000).toLocaleString("en-US")} TB`;
+  if (gb >= 1_000) return `${(gb / 1_000).toLocaleString("en-US", { maximumFractionDigits: 3 })} TB`;
+  return `${gb.toLocaleString("en-US")} GB`;
+}
+
+export interface TierRow {
+  /** e.g. "0 – 10 TB", "Over 150 TB" */
+  range: string;
+  pricePerGB: number;
+}
+
+/** Rows for the assumptions panel: free row (if applied) then each paid tier. */
+export function tierRows(opts: PricingOptions): { rows: TierRow[]; free: TierRow | null } {
+  const r = activeRates(opts);
+  const freeGB = opts.freeTier ? r.freeGB : 0;
+  const rows: TierRow[] = [];
+  let from = 0;
+  for (const t of r.tiers) {
+    // A large free allowance can cover whole tiers; skip those.
+    if (t.upToGB !== null && t.upToGB <= freeGB) {
+      from = t.upToGB;
+      continue;
+    }
+    const start = Math.max(from, freeGB);
+    const label =
+      t.upToGB === null ? `Over ${formatGB(start)}` : `${start === 0 ? "0" : formatGB(start)} – ${formatGB(t.upToGB)}`;
+    rows.push({ range: label, pricePerGB: t.pricePerGB });
+    from = t.upToGB ?? Infinity;
+  }
+  return { rows, free: freeGB > 0 ? { range: `First ${formatGB(freeGB)}`, pricePerGB: 0 } : null };
+}
+
 /* ------------------------------------------------------------------ */
-/* Editable draft + validation                                         */
+/* Editing rates (UI) and encoding them (share links)                  */
 /* ------------------------------------------------------------------ */
 
-/** What the editor holds: raw strings so users can type freely. */
-export interface TierDraft {
-  upToGB: string; // "" for the last (unlimited) tier
-  pricePerGB: string;
+export const MAX_TIERS = 12;
+const MAX_PRICE_PER_GB = 10;
+const MAX_GB = 1e12;
+
+/** What the editor holds: raw strings so people can type freely. */
+export interface RatesDraft {
+  freeGB: string;
+  /** The last tier's upToGB is ignored: it is always unlimited. */
+  tiers: { upToGB: string; pricePerGB: string }[];
 }
 
-export interface PricingDraft {
-  currency: string;
-  tiers: TierDraft[];
-}
-
-export interface TierErrors {
-  upToGB?: string;
-  pricePerGB?: string;
-}
-
-export interface ValidationResult {
+export interface RatesValidation {
   ok: boolean;
-  pricing?: Pricing;
-  currencyError?: string;
-  tierErrors: TierErrors[];
+  rates?: ModelRates;
+  freeError?: string;
+  tierErrors: { upToGB?: string; pricePerGB?: string }[];
   formError?: string;
 }
 
-export function pricingToDraft(p: Pricing): PricingDraft {
+export function ratesToDraft(r: ModelRates): RatesDraft {
   return {
-    currency: p.currency,
-    tiers: p.tiers.map((t) => ({
-      upToGB: t.upToGB === null ? "" : String(t.upToGB),
-      pricePerGB: String(t.pricePerGB),
-    })),
+    freeGB: String(r.freeGB),
+    tiers: r.tiers.map((t) => ({ upToGB: t.upToGB === null ? "" : String(t.upToGB), pricePerGB: String(t.pricePerGB) })),
   };
 }
 
+/** "10,000" → 10000, "$0.09" → 0.09, "" → null, "abc" → NaN */
 function parseNum(s: string): number | null {
-  const cleaned = s.replace(/[,\s_]/g, "");
+  const cleaned = s.replace(/[,\s_$]/g, "");
   if (cleaned === "") return null;
   const n = Number(cleaned);
   return Number.isFinite(n) ? n : NaN;
 }
 
-export function validatePricing(draft: PricingDraft): ValidationResult {
-  const tierErrors: TierErrors[] = draft.tiers.map(() => ({}));
-  const result: ValidationResult = { ok: true, tierErrors };
+export function validateRates(d: RatesDraft): RatesValidation {
+  const tierErrors: RatesValidation["tierErrors"] = d.tiers.map(() => ({}));
+  const out: RatesValidation = { ok: false, tierErrors };
 
-  const currency = draft.currency.trim();
-  if (!currency) {
-    result.currencyError = "Enter a currency label, e.g. USD.";
-  } else if (currency.length > 8) {
-    result.currencyError = "Keep the currency label to 8 characters or fewer.";
-  }
+  const free = parseNum(d.freeGB);
+  if (free === null) out.freeError = "Enter the free allowance in GB (0 for none).";
+  else if (Number.isNaN(free)) out.freeError = "Enter a number of GB.";
+  else if (free < 0) out.freeError = "Can't be negative.";
+  else if (free > MAX_GB) out.freeError = "That's too large.";
 
-  if (draft.tiers.length === 0) {
-    result.formError = "Add at least one tier.";
-    result.ok = false;
-    return result;
+  if (d.tiers.length === 0 || d.tiers.length > MAX_TIERS) {
+    out.formError = `Use between 1 and ${MAX_TIERS} tiers.`;
+    return out;
   }
 
   const tiers: PricingTier[] = [];
-  let prevLimit = 0;
-  draft.tiers.forEach((t, i) => {
-    const isLast = i === draft.tiers.length - 1;
+  let prev = 0;
+  d.tiers.forEach((t, i) => {
+    const last = i === d.tiers.length - 1;
     const price = parseNum(t.pricePerGB);
-    if (price === null) {
-      tierErrors[i].pricePerGB = "Enter a price (0 for free).";
-    } else if (Number.isNaN(price)) {
-      tierErrors[i].pricePerGB = "Price must be a number.";
-    } else if (price < 0) {
-      tierErrors[i].pricePerGB = "Price can't be negative.";
-    }
+    if (price === null) tierErrors[i].pricePerGB = "Enter a price per GB.";
+    else if (Number.isNaN(price)) tierErrors[i].pricePerGB = "Enter a number, e.g. 0.09.";
+    else if (price < 0) tierErrors[i].pricePerGB = "Can't be negative.";
+    else if (price > MAX_PRICE_PER_GB) tierErrors[i].pricePerGB = `Max $${MAX_PRICE_PER_GB} per GB.`;
 
     let upTo: number | null = null;
-    if (!isLast) {
-      const limit = parseNum(t.upToGB);
-      if (limit === null) {
-        tierErrors[i].upToGB = "Enter an upper limit in GB.";
-      } else if (Number.isNaN(limit)) {
-        tierErrors[i].upToGB = "Limit must be a number.";
-      } else if (limit <= prevLimit) {
-        tierErrors[i].upToGB =
-          i === 0
-            ? "Limit must be greater than 0."
-            : `Limit must be greater than the previous tier (${prevLimit.toLocaleString("en-US")} GB).`;
-      } else {
-        upTo = limit;
-        prevLimit = limit;
+    if (!last) {
+      const lim = parseNum(t.upToGB);
+      if (lim === null) tierErrors[i].upToGB = "Enter where this tier ends, in GB.";
+      else if (Number.isNaN(lim)) tierErrors[i].upToGB = "Enter a number of GB.";
+      else if (lim <= prev) tierErrors[i].upToGB = `Must be more than ${prev.toLocaleString("en-US")} GB.`;
+      else if (lim > MAX_GB) tierErrors[i].upToGB = "That's too large.";
+      else {
+        upTo = lim;
+        prev = lim;
       }
     }
     tiers.push({ upToGB: upTo, pricePerGB: price ?? 0 });
   });
 
-  const hasTierErrors = tierErrors.some((e) => e.upToGB || e.pricePerGB);
-  if (hasTierErrors || result.currencyError) {
-    result.ok = false;
-    return result;
-  }
-  result.pricing = { currency, tiers };
-  return result;
+  if (out.freeError || tierErrors.some((e) => e.upToGB || e.pricePerGB)) return out;
+  out.ok = true;
+  out.rates = { freeGB: free as number, tiers };
+  return out;
 }
 
-/* ------------------------------------------------------------------ */
-/* Share-URL encoding                                                  */
-/* ------------------------------------------------------------------ */
-
-/** Encodes tiers compactly: "100:0,10000:0.09,...,inf:0.05" */
-export function encodeTiers(tiers: PricingTier[]): string {
-  return tiers
-    .map((t) => `${t.upToGB === null ? "inf" : t.upToGB}:${t.pricePerGB}`)
-    .join(",");
+/** Compact share-link form: "100|10000:0.09,50000:0.085,inf:0.05" */
+export function encodeRates(r: ModelRates): string {
+  return `${r.freeGB}|${r.tiers.map((t) => `${t.upToGB === null ? "inf" : t.upToGB}:${t.pricePerGB}`).join(",")}`;
 }
 
-export function decodeTiers(s: string): PricingTier[] | null {
-  if (!s || s.length > 500) return null;
-  const parts = s.split(",");
-  if (parts.length === 0 || parts.length > 20) return null;
-  const draft: PricingDraft = {
-    currency: "X",
-    tiers: parts.map((p) => {
-      const [limit, price] = p.split(":");
-      return {
-        upToGB: limit === "inf" ? "" : (limit ?? ""),
-        pricePerGB: price ?? "",
-      };
-    }),
-  };
-  // Only the final tier may be unlimited.
-  if (parts.slice(0, -1).some((p) => p.startsWith("inf:"))) return null;
-  if (!parts[parts.length - 1].startsWith("inf:")) return null;
-  const v = validatePricing(draft);
-  return v.ok && v.pricing ? v.pricing.tiers : null;
+export function decodeRates(s: string | null): ModelRates | null {
+  if (!s || s.length > 400 || !/^[0-9.|,:inf]+$/.test(s)) return null;
+  const [free, list, extra] = s.split("|");
+  if (extra !== undefined || !list) return null;
+  const pairs = list.split(",").map((p) => p.split(":"));
+  if (pairs.length > MAX_TIERS || pairs.some((p) => p.length !== 2)) return null;
+  // Only the last tier may be, and must be, unlimited.
+  if (pairs.some(([lim], i) => (lim === "inf") !== (i === pairs.length - 1))) return null;
+  const v = validateRates({ freeGB: free, tiers: pairs.map(([lim, price]) => ({ upToGB: lim === "inf" ? "" : lim, pricePerGB: price })) });
+  return v.ok ? v.rates! : null;
 }
