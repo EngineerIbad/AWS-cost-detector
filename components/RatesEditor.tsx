@@ -72,13 +72,20 @@ export default function RatesEditor({ model, rates, onChange, idPrefix }: Props)
 
   return (
     <div className="rates">
-      <button type="button" className="disclosure" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen((o) => !o)}>
-        <svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" className="chev">
-          <path d="M5 3l5 5-5 5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-        Edit rates
-        {custom && <span className="badge badge-custom">Custom</span>}
-      </button>
+      <div className="rates-head-row">
+        <button type="button" className="disclosure" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen((o) => !o)}>
+          <svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" className="chev">
+            <path d="M5 3l5 5-5 5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          Edit rates
+          {custom && <span className="badge badge-custom">Custom</span>}
+        </button>
+        {/* Straight to the official page for the selected model. */}
+        <a className="btn-ghost btn-link" href={m.source} target="_blank" rel="noopener noreferrer">
+          {model === "cloudfront" ? "CloudFront pricing" : "AWS pricing"} <span aria-hidden="true">↗</span>
+          <span className="sr-only"> (opens in a new tab)</span>
+        </a>
+      </div>
 
       {open && (
         <div id={panelId} className="rates-body">
@@ -164,6 +171,46 @@ export default function RatesEditor({ model, rates, onChange, idPrefix }: Props)
               );
             })}
           </div>
+          {draft.requestPer10k !== undefined && (
+            <div className="rates-requests">
+              <div className="field">
+                <label htmlFor={`${idPrefix}-req-price`}>HTTPS requests (USD per 10,000)</label>
+                <input
+                  id={`${idPrefix}-req-price`}
+                  type="text"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  value={draft.requestPer10k}
+                  onChange={(e) => setDraft({ ...draft, requestPer10k: e.target.value })}
+                  aria-invalid={!!v.requestPriceError}
+                  aria-describedby={v.requestPriceError ? `${idPrefix}-req-price-error` : undefined}
+                />
+                {v.requestPriceError && (
+                  <p className="field-error" id={`${idPrefix}-req-price-error`}>
+                    {v.requestPriceError}
+                  </p>
+                )}
+              </div>
+              <div className="field">
+                <label htmlFor={`${idPrefix}-req-free`}>Free requests per month</label>
+                <input
+                  id={`${idPrefix}-req-free`}
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  value={draft.freeRequests ?? ""}
+                  onChange={(e) => setDraft({ ...draft, freeRequests: e.target.value })}
+                  aria-invalid={!!v.freeRequestsError}
+                  aria-describedby={v.freeRequestsError ? `${idPrefix}-req-free-error` : undefined}
+                />
+                {v.freeRequestsError && (
+                  <p className="field-error" id={`${idPrefix}-req-free-error`}>
+                    {v.freeRequestsError}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
           {v.formError && <p className="field-error">{v.formError}</p>}
           {!v.ok && <p className="hint">Fix the highlighted fields. Costs use the last valid rates until then.</p>}
 

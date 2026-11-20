@@ -75,7 +75,8 @@ export function mixCost(s: CostSummary, mix: ClientMix, requests: number, pricin
   ];
   const bytes = parts.reduce((acc, p) => acc + p.share * p.bytes, 0);
   const monthlyBytes = bytes * requests;
-  return { bytes, monthlyBytes, monthlyCost: monthlyCostForBytes(monthlyBytes, pricing), parts, zstdFallback };
+  // Request fees (CloudFront) don't shrink with compression; include them like every cost row does.
+  return { bytes, monthlyBytes, monthlyCost: monthlyCostForBytes(monthlyBytes, pricing) + s.requestCost, parts, zstdFallback };
 }
 
 /* ------------------------------------------------------------------ */

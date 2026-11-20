@@ -2040,4 +2040,285 @@ select::-ms-expand {
   opacity: 1;
 }
 
+.charges-intro {
+  margin: -6px 0 14px;
+}
+
+.charges-compare {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+  display: grid;
+}
+
+.charges-cell {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  min-width: 0;
+  padding: 12px 14px;
+}
+
+.charges-cell.is-active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.charges-cell-head {
+  color: var(--text);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+}
+
+.charges-tag {
+  background: var(--primary);
+  color: var(--on-primary);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.charges-tag-good {
+  background: var(--surface);
+  color: var(--primary);
+}
+
+.charges-cell-big {
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+  margin-top: 6px;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.charges-cell-big span {
+  color: var(--muted);
+  margin-left: 4px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.charges-cell-sub {
+  color: var(--muted);
+  margin-top: 2px;
+  font-size: 13px;
+}
+
+.charges-tabs {
+  margin-bottom: 14px;
+}
+
+.charges-panel {
+  border-radius: var(--radius-sm);
+  gap: 14px;
+  display: grid;
+}
+
+.charges-how {
+  color: var(--text);
+  gap: 6px;
+  padding-left: 18px;
+  font-size: 14px;
+  display: grid;
+}
+
+.charges-how li::marker {
+  color: var(--primary);
+}
+
+.charges-table {
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+  width: 100%;
+  font-size: 14px;
+}
+
+.charges-table caption {
+  text-align: left;
+  color: var(--text);
+  padding-bottom: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.charges-table th, .charges-table td {
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  padding: 8px 6px;
+  font-weight: 400;
+}
+
+.charges-table thead th {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.charges-table .num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.charges-table tfoot th, .charges-table tfoot td {
+  color: var(--primary);
+  border-bottom: 0;
+  font-weight: 700;
+}
+
+.charges-rates summary {
+  cursor: pointer;
+  color: var(--primary);
+  align-items: center;
+  min-height: 44px;
+  font-size: 14px;
+  font-weight: 600;
+  display: flex;
+}
+
+.charges-rates ul {
+  padding: 0;
+  font-size: 14px;
+  list-style: none;
+  display: grid;
+}
+
+.charges-rates li {
+  border-bottom: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  display: flex;
+}
+
+.charges-foot {
+  gap: 10px;
+  display: grid;
+}
+
+.charges-actions {
+  flex-wrap: wrap;
+  gap: 10px;
+  display: flex;
+}
+
+.btn-link {
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+  display: inline-flex;
+}
+
+.rates-head-row {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  display: flex;
+}
+
+.rates-head-row .disclosure {
+  margin-top: 0;
+}
+
+@media (max-width: 640px) {
+  .charges-compare {
+    gap: 8px;
+  }
+
+  .charges-cell {
+    padding: 10px 12px;
+  }
+
+  .charges-cell-big {
+    font-size: 19px;
+  }
+
+  .charges-cell-big span {
+    margin-left: 0;
+    display: block;
+  }
+
+  .charges-table th, .charges-table td {
+    padding: 8px 4px;
+    font-size: 13px;
+  }
+}
+
+.traffic-body {
+  gap: 22px;
+  display: grid;
+}
+
+.traffic-body .field {
+  gap: 8px;
+}
+
+.traffic-body .chips {
+  margin-top: 4px;
+}
+
+.traffic-body > .hint, .traffic-body .field > .hint {
+  margin-top: 2px;
+  line-height: 1.55;
+}
+
+.traffic-total {
+  border-radius: var(--radius-sm);
+  background: var(--primary-soft);
+  border: 1px solid var(--border);
+  gap: 2px;
+  padding: 14px 16px;
+  display: grid;
+}
+
+.traffic-total-label {
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.traffic-total-value {
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.traffic-total-sub {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+
+.step-intro {
+  margin-bottom: 20px;
+}
+
+.rates-requests {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  display: grid;
+}
+
+@media (max-width: 640px) {
+  .rates-requests {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.rates-requests {
+  align-items: end;
+}
+
 /*# sourceMappingURL=app_globals_css_1igg3k2-ikub5._.single.css.map*/

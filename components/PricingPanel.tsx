@@ -2,7 +2,7 @@
 
 import {
   activeRates,
-  CLOUDFRONT_NOTE,
+  modelNote,
   FREE_TIER_HELP,
   formatGB,
   getModel,
@@ -65,7 +65,7 @@ export default function PricingPanel({ pricing, onChange, onRatesChange, editorK
         ))}
       </fieldset>
       <p className="hint" id={`${idPrefix}-model-note`}>
-        {pricing.model === "cloudfront" ? CLOUDFRONT_NOTE : `Tiered ${model.scope}.`}
+        {modelNote(pricing.model)}
       </p>
 
       <label className="switch free-switch">

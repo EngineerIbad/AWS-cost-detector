@@ -83,7 +83,7 @@ export default function SharedView({ state }: { state: ShareState }) {
         </section>
 
         <section className="results" aria-label="Results">
-          <Results result={result} label="Shared result" requests={requests} paging={paging} pricing={pricing} mix={mix} onMixChange={setMix} />
+          <Results result={result} label="Shared result" requests={requests} paging={paging} pricing={pricing} mix={mix} onMixChange={setMix} customRates={customRates} onUseModel={(m) => setBase({ ...base, model: m })} />
         </section>
       </main>
 

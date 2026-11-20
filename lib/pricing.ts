@@ -40,6 +40,8 @@ export interface PricingModel {
   /** Monthly free allowance in GB (only applied when the free tier toggle is on). */
   freeGB: number;
   freeNote: string;
+  /** Per-request charges, if this service bills them (CloudFront does; regional egress doesn't). */
+  requests?: { per10k: number; freeRequests: number; protocol: "HTTPS" };
   tiers: PricingTier[];
   source: string;
   /** ISO date (YYYY-MM-DD) the rates were last checked against `source`. */
@@ -70,6 +72,10 @@ export const PRICING_MODELS: Record<PricingModelId, PricingModel> = {
     scope: "Amazon CloudFront data transfer out to the internet, North America / Europe, pay-as-you-go",
     freeGB: 1_000,
     freeNote: "1 TB/month free (CloudFront always-free tier, per AWS account).",
+    // Verified 2026-11-20 against the pay-as-you-go page, "Request Pricing for All
+    // HTTP Methods (per 10,000)": HTTPS 0.0100 USD (US/MX/CA). The always-free tier
+    // includes "10,000,000 HTTP or HTTPS Requests" per month. APIs are HTTPS.
+    requests: { per10k: 0.01, freeRequests: 10_000_000, protocol: "HTTPS" },
     // Verified 2026-11-20 against the pay-as-you-go page: "First 1TB Free,
     // Next 9TB $0.085, Next 40TB $0.080, Next 100TB $0.060, Next 350TB $0.040,
     // Next 524TB $0.030, Next 4PB $0.025, Over 5PB $0.020" (US/MX/CA and
@@ -93,12 +99,22 @@ export const DEFAULT_MODEL: PricingModelId = "direct";
 export const DEFAULT_FREE_TIER = true;
 
 export const FREE_TIER_HELP = "The free tier is shared across your whole AWS account, so other traffic may already use it.";
-export const CLOUDFRONT_NOTE = "Origin → CloudFront transfer is free. CloudFront also charges per request, which this tool doesn't include.";
+/** One line under the "How is this served?" selector, built from the config above. */
+export function modelNote(id: PricingModelId): string {
+  const m = PRICING_MODELS[id];
+  if (!m.requests) return `Tiered ${m.scope}.`;
+  const free = (m.requests.freeRequests / 1e6).toLocaleString("en-US");
+  return `Origin → CloudFront transfer is free. Includes ${m.requests.protocol} request fees: $${m.requests.per10k.toFixed(4)} per 10,000 after the first ${free}M each month.`;
+}
 
 /** The numbers a cost calculation uses: a free allowance and the paid tiers. */
 export interface ModelRates {
   freeGB: number;
   tiers: PricingTier[];
+  /** Price per 10,000 requests, for services that bill requests (CloudFront). */
+  requestPer10k?: number;
+  /** Requests per month covered by the free tier. */
+  freeRequests?: number;
 }
 
 /** What a cost calculation needs: which model, whether to subtract the free allowance, and any user override. */
@@ -141,7 +157,24 @@ export function bytesToGB(bytes: number): number {
   return bytes / BYTES_PER_GB;
 }
 
-/** Monthly cost in USD for `bytes` of monthly egress under the given options. */
+/** Request fees for a month, after the free allowance. 0 for services that don't bill requests. */
+export function requestCost(monthlyRequests: number, opts: PricingOptions): number {
+  return requestBreakdown(monthlyRequests, opts)?.cost ?? 0;
+}
+
+export function requestBreakdown(
+  monthlyRequests: number,
+  opts: PricingOptions,
+): { per10k: number; freeRequests: number; freeUsed: number; billable: number; cost: number } | null {
+  const r = activeRates(opts);
+  if (r.requestPer10k === undefined) return null;
+  const n = Math.max(0, Math.round(monthlyRequests));
+  const freeRequests = opts.freeTier ? (r.freeRequests ?? 0) : 0;
+  const billable = Math.max(0, n - freeRequests);
+  return { per10k: r.requestPer10k, freeRequests, freeUsed: Math.min(n, freeRequests), billable, cost: (billable / 10_000) * r.requestPer10k };
+}
+
+/** Monthly cost in USD for `bytes` of monthly egress under the given options (data transfer only). */
 export function monthlyCostForBytes(bytes: number, opts: PricingOptions): number {
   const r = activeRates(opts);
   return tieredCost(bytesToGB(bytes), r.tiers, opts.freeTier ? r.freeGB : 0);
@@ -149,7 +182,12 @@ export function monthlyCostForBytes(bytes: number, opts: PricingOptions): number
 
 export function defaultRates(id: PricingModelId): ModelRates {
   const m = getModel(id);
-  return { freeGB: m.freeGB, tiers: m.tiers.map((t) => ({ ...t })) };
+  const r: ModelRates = { freeGB: m.freeGB, tiers: m.tiers.map((t) => ({ ...t })) };
+  if (m.requests) {
+    r.requestPer10k = m.requests.per10k;
+    r.freeRequests = m.requests.freeRequests;
+  }
+  return r;
 }
 
 /** The rates actually in effect: the user's override, or the AWS defaults. */
@@ -160,6 +198,8 @@ export function activeRates(opts: PricingOptions): ModelRates {
 export function ratesEqual(a: ModelRates, b: ModelRates): boolean {
   return (
     a.freeGB === b.freeGB &&
+    (a.requestPer10k ?? null) === (b.requestPer10k ?? null) &&
+    (a.freeRequests ?? null) === (b.freeRequests ?? null) &&
     a.tiers.length === b.tiers.length &&
     a.tiers.every((t, i) => t.upToGB === b.tiers[i].upToGB && t.pricePerGB === b.tiers[i].pricePerGB)
   );
@@ -190,6 +230,39 @@ export interface TierRow {
   pricePerGB: number;
 }
 
+export interface TierCharge {
+  /** e.g. "100 GB – 10 TB" */
+  range: string;
+  /** GB billed in this tier this month. */
+  gb: number;
+  pricePerGB: number;
+  cost: number;
+}
+
+/**
+ * How a month's usage is billed, tier by tier: the free part first, then each
+ * tier the usage reaches. `total` always equals monthlyCostForBytes for the same GB.
+ */
+export function tierBreakdown(gb: number, opts: PricingOptions): { freeGB: number; freeUsedGB: number; rows: TierCharge[]; total: number } {
+  const r = activeRates(opts);
+  const freeGB = opts.freeTier ? r.freeGB : 0;
+  const used = Math.max(0, gb);
+  const rows: TierCharge[] = [];
+  let from = 0;
+  for (const t of r.tiers) {
+    if (used <= from) break;
+    const to = t.upToGB ?? Infinity;
+    const start = Math.max(from, freeGB);
+    const billable = Math.min(used, to) - start;
+    if (billable > 0) {
+      const range = t.upToGB === null ? `Over ${formatGB(start)}` : `${start === 0 ? "0" : formatGB(start)} – ${formatGB(t.upToGB)}`;
+      rows.push({ range, gb: billable, pricePerGB: t.pricePerGB, cost: billable * t.pricePerGB });
+    }
+    from = to;
+  }
+  return { freeGB, freeUsedGB: Math.min(used, freeGB), rows, total: rows.reduce((s, x) => s + x.cost, 0) };
+}
+
 /** Rows for the assumptions panel: free row (if applied) then each paid tier. */
 export function tierRows(opts: PricingOptions): { rows: TierRow[]; free: TierRow | null } {
   const r = activeRates(opts);
@@ -217,6 +290,7 @@ export function tierRows(opts: PricingOptions): { rows: TierRow[]; free: TierRow
 
 export const MAX_TIERS = 12;
 const MAX_PRICE_PER_GB = 10;
+const MAX_REQUEST_PRICE = 10;
 const MAX_GB = 1e12;
 
 /** What the editor holds: raw strings so people can type freely. */
@@ -224,6 +298,9 @@ export interface RatesDraft {
   freeGB: string;
   /** The last tier's upToGB is ignored: it is always unlimited. */
   tiers: { upToGB: string; pricePerGB: string }[];
+  /** Only for services that bill requests. */
+  requestPer10k?: string;
+  freeRequests?: string;
 }
 
 export interface RatesValidation {
@@ -232,12 +309,15 @@ export interface RatesValidation {
   freeError?: string;
   tierErrors: { upToGB?: string; pricePerGB?: string }[];
   formError?: string;
+  requestPriceError?: string;
+  freeRequestsError?: string;
 }
 
 export function ratesToDraft(r: ModelRates): RatesDraft {
   return {
     freeGB: String(r.freeGB),
     tiers: r.tiers.map((t) => ({ upToGB: t.upToGB === null ? "" : String(t.upToGB), pricePerGB: String(t.pricePerGB) })),
+    ...(r.requestPer10k !== undefined ? { requestPer10k: String(r.requestPer10k), freeRequests: String(r.freeRequests ?? 0) } : {}),
   };
 }
 
@@ -289,25 +369,54 @@ export function validateRates(d: RatesDraft): RatesValidation {
     tiers.push({ upToGB: upTo, pricePerGB: price ?? 0 });
   });
 
-  if (out.freeError || tierErrors.some((e) => e.upToGB || e.pricePerGB)) return out;
+  // Request pricing (only present for services that bill requests).
+  let requestPer10k: number | undefined;
+  let freeRequests: number | undefined;
+  if (d.requestPer10k !== undefined) {
+    const rp = parseNum(d.requestPer10k);
+    if (rp === null || Number.isNaN(rp)) out.requestPriceError = "Enter a price per 10,000 requests, e.g. 0.01.";
+    else if (rp < 0) out.requestPriceError = "Can't be negative.";
+    else if (rp > MAX_REQUEST_PRICE) out.requestPriceError = `Max $${MAX_REQUEST_PRICE} per 10,000.`;
+    else requestPer10k = rp;
+    const fr = parseNum(d.freeRequests ?? "0");
+    if (fr === null || Number.isNaN(fr) || !Number.isInteger(fr)) out.freeRequestsError = "Enter a whole number of requests (0 for none).";
+    else if (fr < 0) out.freeRequestsError = "Can't be negative.";
+    else if (fr > MAX_GB) out.freeRequestsError = "That's too large.";
+    else freeRequests = fr;
+  }
+
+  if (out.freeError || out.requestPriceError || out.freeRequestsError || tierErrors.some((e) => e.upToGB || e.pricePerGB)) return out;
   out.ok = true;
-  out.rates = { freeGB: free as number, tiers };
+  out.rates = { freeGB: free as number, tiers, ...(requestPer10k !== undefined ? { requestPer10k, freeRequests } : {}) };
   return out;
 }
 
 /** Compact share-link form: "100|10000:0.09,50000:0.085,inf:0.05" */
 export function encodeRates(r: ModelRates): string {
-  return `${r.freeGB}|${r.tiers.map((t) => `${t.upToGB === null ? "inf" : t.upToGB}:${t.pricePerGB}`).join(",")}`;
+  const base = `${r.freeGB}|${r.tiers.map((t) => `${t.upToGB === null ? "inf" : t.upToGB}:${t.pricePerGB}`).join(",")}`;
+  // Optional request pricing: "|r<per10k>:<freeRequests>"
+  return r.requestPer10k !== undefined ? `${base}|r${r.requestPer10k}:${r.freeRequests ?? 0}` : base;
 }
 
 export function decodeRates(s: string | null): ModelRates | null {
-  if (!s || s.length > 400 || !/^[0-9.|,:inf]+$/.test(s)) return null;
-  const [free, list, extra] = s.split("|");
+  if (!s || s.length > 400 || !/^[0-9.|,:infr]+$/.test(s)) return null;
+  const [free, list, req, extra] = s.split("|");
   if (extra !== undefined || !list) return null;
+  let requestPer10k: string | undefined;
+  let freeRequests: string | undefined;
+  if (req !== undefined) {
+    const m = /^r([0-9.]+):([0-9]+)$/.exec(req);
+    if (!m) return null;
+    [, requestPer10k, freeRequests] = m;
+  }
   const pairs = list.split(",").map((p) => p.split(":"));
   if (pairs.length > MAX_TIERS || pairs.some((p) => p.length !== 2)) return null;
   // Only the last tier may be, and must be, unlimited.
   if (pairs.some(([lim], i) => (lim === "inf") !== (i === pairs.length - 1))) return null;
-  const v = validateRates({ freeGB: free, tiers: pairs.map(([lim, price]) => ({ upToGB: lim === "inf" ? "" : lim, pricePerGB: price })) });
+  const v = validateRates({
+    freeGB: free,
+    tiers: pairs.map(([lim, price]) => ({ upToGB: lim === "inf" ? "" : lim, pricePerGB: price })),
+    ...(requestPer10k !== undefined ? { requestPer10k, freeRequests } : {}),
+  });
   return v.ok ? v.rates! : null;
 }

@@ -1900,3 +1900,260 @@ select::-ms-expand {
   color: var(--surface);
   opacity: 1;
 }
+
+/* ================================================================== */
+/* "How you're charged": AWS direct vs CloudFront                      */
+/* ================================================================== */
+.charges-intro {
+  margin: -6px 0 14px;
+}
+.charges-compare {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.charges-cell {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  background: var(--card);
+  min-width: 0;
+}
+.charges-cell.is-active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+.charges-cell-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.charges-tag {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--on-primary);
+}
+.charges-tag-good {
+  background: var(--surface);
+  color: var(--primary);
+}
+.charges-cell-big {
+  margin-top: 6px;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+.charges-cell-big span {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  margin-left: 4px;
+}
+.charges-cell-sub {
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.charges-tabs {
+  margin-bottom: 14px;
+}
+.charges-panel {
+  display: grid;
+  gap: 14px;
+  border-radius: var(--radius-sm);
+}
+.charges-how {
+  display: grid;
+  gap: 6px;
+  padding-left: 18px;
+  font-size: 14px;
+  color: var(--text);
+}
+.charges-how li::marker {
+  color: var(--primary);
+}
+.charges-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.charges-table caption {
+  text-align: left;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  padding-bottom: 8px;
+}
+.charges-table th,
+.charges-table td {
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  font-weight: 400;
+}
+.charges-table thead th {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.charges-table .num {
+  text-align: right;
+  white-space: nowrap;
+}
+.charges-table tfoot th,
+.charges-table tfoot td {
+  font-weight: 700;
+  color: var(--primary);
+  border-bottom: 0;
+}
+.charges-rates summary {
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--primary);
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+.charges-rates ul {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  font-size: 14px;
+}
+.charges-rates li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+.charges-foot {
+  display: grid;
+  gap: 10px;
+}
+.charges-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* Link styled as a ghost button (pricing pages). */
+.btn-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+}
+
+/* "Edit rates" + pricing-page button on one row. */
+.rates-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.rates-head-row .disclosure {
+  margin-top: 0;
+}
+
+@media (max-width: 640px) {
+  .charges-compare {
+    gap: 8px;
+  }
+  .charges-cell {
+    padding: 10px 12px;
+  }
+  .charges-cell-big {
+    font-size: 19px;
+  }
+  .charges-cell-big span {
+    display: block;
+    margin-left: 0;
+  }
+  .charges-table th,
+  .charges-table td {
+    padding: 8px 4px;
+    font-size: 13px;
+  }
+}
+
+/* ================================================================== */
+/* Step 2 (traffic): clear spacing between groups                      */
+/* ================================================================== */
+.traffic-body {
+  display: grid;
+  gap: 22px;
+}
+.traffic-body .field {
+  gap: 8px;
+}
+.traffic-body .chips {
+  margin-top: 4px;
+}
+.traffic-body > .hint,
+.traffic-body .field > .hint {
+  margin-top: 2px;
+  line-height: 1.55;
+}
+/* The computed total gets its own box so it reads as a result, not a label. */
+.traffic-total {
+  display: grid;
+  gap: 2px;
+  padding: 14px 16px;
+  border-radius: var(--radius-sm);
+  background: var(--primary-soft);
+  border: 1px solid var(--border);
+}
+.traffic-total-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.traffic-total-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.traffic-total-sub {
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.step-intro {
+  margin-bottom: 20px;
+}
+
+/* Edit rates: request pricing fields side by side. */
+.rates-requests {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+@media (max-width: 640px) {
+  .rates-requests {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+/* Keep the two request inputs level even when one label wraps. */
+.rates-requests {
+  align-items: end;
+}

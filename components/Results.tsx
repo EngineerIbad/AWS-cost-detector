@@ -6,9 +6,9 @@ import { buildCopySummary, effectiveSizes, encodingName, type SessionTraffic } f
 import { buildEstimate, CLIENTS, normalizeMix, sizeText, type ClientMix, type DisplayRow, type Estimate } from "../lib/estimate";
 import { compactCount, formatBytes, formatMoney, formatNumber, formatPercent, formatRatio, sizeReduction } from "../lib/format";
 import { MAX_SAMPLED_PAGES } from "../lib/pagination";
-import { activeRates, formatGB, isCustom, type PricingOptions } from "../lib/pricing";
+import { activeRates, formatGB, type ModelRates, type PricingModelId, type PricingOptions } from "../lib/pricing";
 import type { AnalysisResult, Finding, PaginationResult, Severity } from "../lib/types";
-import AssumptionsPanel from "./AssumptionsPanel";
+import ChargesTabs from "./ChargesTabs";
 import { showToast } from "./Toast";
 
 interface Props {
@@ -23,6 +23,10 @@ interface Props {
   paging?: SessionTraffic | null;
   /** Inputs changed or a measurement is running: dim everything below the status bar. */
   dimmed?: boolean;
+  /** Custom rates per model, so "How you're charged" can price both models. */
+  customRates?: Partial<Record<PricingModelId, ModelRates>>;
+  /** Switch the estimate to another pricing model. */
+  onUseModel?: (id: PricingModelId) => void;
 }
 
 /** Above this deviation from the mean, warn that page sizes vary a lot. */
@@ -30,7 +34,7 @@ const VARIATION_THRESHOLD = 0.3;
 const SEV_ORDER: Record<Severity, number> = { high: 0, medium: 1, info: 2 };
 const SEV_LABEL: Record<Severity, string> = { high: "High", medium: "Medium", info: "Info" };
 
-export default function Results({ result, label, requests, pricing, mix, onMixChange, animate = false, paging = null, dimmed = false }: Props) {
+export default function Results({ result, label, requests, pricing, mix, onMixChange, animate = false, paging = null, dimmed = false, customRates, onUseModel }: Props) {
   const paged = !!paging;
   const est = useMemo(() => (result ? buildEstimate(result, requests, pricing, paged, mix) : null), [result, requests, pricing, paged, mix]);
 
@@ -134,9 +138,13 @@ export default function Results({ result, label, requests, pricing, mix, onMixCh
                     {paging.pagesPerSession > sampled ? `, extrapolated to ${paging.pagesPerSession}` : ""}.
                   </>
                 )}{" "}
-                Compression rows compress the body as served.{!shared && " Times are single runs on our server."}
+                Compression rows compress the body as served.
+                {est.summary.requestCost > 0 && ` Each row includes ${formatMoney(est.summary.requestCost)}/month of CloudFront request fees (the same for every format).`}
+                {!shared && " Times are single runs on our server."}
               </p>
             </div>
+
+            <ChargesTabs result={a} requests={requests} paged={paged} mix={mix} pricing={pricing} customRates={customRates} onUseModel={onUseModel} />
           </>
         )}
 
@@ -162,11 +170,6 @@ export default function Results({ result, label, requests, pricing, mix, onMixCh
           </div>
         )}
 
-        {a.rawBytes > 0 && (
-          <Disclosure title="Pricing assumptions" summary={`${pricing.model === "cloudfront" ? "Via CloudFront" : "Direct from us-east-1"}${isCustom(pricing) ? " · custom rates" : ""}`}>
-            <AssumptionsPanel pricing={pricing} paged={paged} />
-          </Disclosure>
-        )}
 
         {paging && !shared && (
           <Disclosure title="Pages sampled" summary={`${sampled} of up to ${MAX_SAMPLED_PAGES}`}>
@@ -236,7 +239,7 @@ function SummaryBar({ est, unit, dimmed }: { est: Estimate; unit: "page" | "resp
       break;
     case "free-tier":
       kicker = "Within the free tier";
-      big = `${formatMoney(0)}/mo now`;
+      big = `${formatMoney(est.today.monthlyCost)}/mo now`;
       sub = est.scaled
         ? `At ${compactCount(est.scaled.requests)} requests: ${formatMoney(est.scaled.todayCost)} → ${formatMoney(est.scaled.expectedCost)}/mo`
         : `${formatBytes(todayBytes)} → ${formatBytes(est.expectedBytes)} per ${u}`;
@@ -404,7 +407,7 @@ function RecommendationCard({
       <p className="savings-big savings-headline">{MIX_HEADLINE}</p>
       {free ? (
         <p className="savings-sub">
-          {formatBytes(est.today.monthlyBytes)}/month fits in the {formatGB(freeGB)} free tier, so egress costs {formatMoney(0)} either way. Compression still
+          {formatBytes(est.today.monthlyBytes)}/month fits in the {formatGB(freeGB)} free tier, so data transfer costs {formatMoney(0)} either way{est.summary.requestCost > 0 ? ` (CloudFront request fees of ${formatMoney(est.summary.requestCost)}/month apply regardless of size)` : ""}. Compression still
           makes each {unit} {sizeText(est)} smaller and faster.
           {est.scaled && (
             <>

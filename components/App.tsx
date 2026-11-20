@@ -145,6 +145,7 @@ export default function App({ demoResults }: Props) {
   const [servedAs, setServedAs] = useState<"identity" | "gzip" | "br">("identity");
   const curlRef = useRef<HTMLTextAreaElement>(null);
   const requestsRef = useRef<HTMLInputElement>(null);
+  const sessionsRef = useRef<HTMLInputElement>(null);
 
   // Result + measurement state
   const [result, setResult] = useState<AnalysisResult | null>(demoResults.social);
@@ -948,12 +949,14 @@ export default function App({ demoResults }: Props) {
               <span className="step-num" aria-hidden="true">2</span> Your traffic
             </h2>
             <p className="step-intro">Adjust the estimate — it updates instantly, no need to measure again.</p>
+            <div className="traffic-body">
             {paginated ? (
               <>
                 <div className="field">
                   <label htmlFor="sessions">Sessions per month</label>
                   <input
                     id="sessions"
+                    ref={sessionsRef}
                     type="text"
                     inputMode="numeric"
                     autoComplete="off"
@@ -984,6 +987,17 @@ export default function App({ demoResults }: Props) {
                         {compactCount(p)}
                       </button>
                     ))}
+                    <button
+                      type="button"
+                      className="chip"
+                      aria-pressed={!SESSION_PRESETS.includes(sessions)}
+                      onClick={() => {
+                        sessionsRef.current?.focus();
+                        sessionsRef.current?.select();
+                      }}
+                    >
+                      Custom
+                    </button>
                   </div>
                 </div>
                 <div className="field pps-field">
@@ -1005,9 +1019,13 @@ export default function App({ demoResults }: Props) {
                   />
                   <FieldError id="pps-error" msg={errors.pps} />
                 </div>
-                <p className="derived" id="traffic-derived" aria-live="polite">
-                  = {formatNumber(pageReqs)} requests/month <span className="hint-inline">(sessions × pages per session)</span>
-                </p>
+                <div className="traffic-total" id="traffic-derived" aria-live="polite">
+                  <span className="traffic-total-label">Total</span>
+                  <span className="traffic-total-value">{formatNumber(pageReqs)} requests/month</span>
+                  <span className="traffic-total-sub">
+                    {formatNumber(sessions)} sessions × {pps} page{pps === 1 ? "" : "s"} per session
+                  </span>
+                </div>
                 <p className="hint">Monthly egress = average page size × requests per month. Headers and TLS overhead are not counted.</p>
               </>
             ) : (
@@ -1063,6 +1081,7 @@ export default function App({ demoResults }: Props) {
                 </p>
               </div>
             )}
+            </div>
           </div>
 
           <PricingPanel
@@ -1101,6 +1120,8 @@ export default function App({ demoResults }: Props) {
             pricing={pricing}
             mix={mix}
             onMixChange={setMix}
+            customRates={customRates}
+            onUseModel={(m) => onPricingChange({ model: m, freeTier: pricingBase.freeTier })}
             animate={resultKey > 0}
             dimmed={status === "stale" || status === "loading" || status === "error"}
           />

@@ -8,9 +8,13 @@ import {
   defaultRates,
   encodeRates,
   isCustom,
+  ratesToDraft,
+  requestBreakdown,
+  requestCost,
   monthlyCostForBytes,
   PRICING_MODELS,
   tieredCost,
+  tierBreakdown,
   tierRows,
   validateRates,
   type PricingOptions,
@@ -186,5 +190,57 @@ describe("custom rates (Edit rates)", () => {
     const { rows, free } = tierRows({ model: "direct", freeTier: true, custom: big });
     expect(free?.range).toBe("First 20 TB");
     expect(rows).toEqual([{ range: "Over 20 TB", pricePerGB: 0.05 }]);
+  });
+});
+
+describe("tier breakdown (How you're charged)", () => {
+  it("free part, then each tier reached; total matches the cost function", () => {
+    const b = tierBreakdown(20_000, direct());
+    expect(b.freeUsedGB).toBe(100);
+    expect(b.rows.map((r) => [r.range, r.gb, r.pricePerGB])).toEqual([
+      ["100 GB – 10 TB", 9_900, 0.09],
+      ["10 TB – 50 TB", 10_000, 0.085],
+    ]);
+    expect(money(b.total)).toBe(costGB(20_000, direct()));
+  });
+
+  it("matches for CloudFront, free tier off, and under the free allowance", () => {
+    for (const [gb, o] of [[7_200, cf()], [7_200, cf(false)], [200_000, direct(false)], [50, direct()]] as const) {
+      expect(money(tierBreakdown(gb, o).total)).toBe(costGB(gb, o));
+    }
+    expect(tierBreakdown(50, direct()).rows).toEqual([]);
+  });
+});
+
+describe("CloudFront request fees", () => {
+  it("HTTPS: 0.0100 USD per 10,000 after the first 10M requests (free tier on)", () => {
+    expect(PRICING_MODELS.cloudfront.requests).toEqual({ per10k: 0.01, freeRequests: 10_000_000, protocol: "HTTPS" });
+    expect(money(requestCost(100_000_000, cf()))).toBe(90); // (100M − 10M) / 10,000 × 0.01
+    expect(money(requestCost(100_000_000, cf(false)))).toBe(100);
+    expect(requestCost(10_000_000, cf())).toBe(0);
+    expect(requestCost(1_000_000, cf())).toBe(0);
+  });
+
+  it("direct from AWS has no request fees", () => {
+    expect(requestCost(1e9, direct())).toBe(0);
+    expect(requestBreakdown(1e9, direct())).toBeNull();
+  });
+
+  it("custom request rates are used and round-trip through share links", () => {
+    const custom = { ...defaultRates("cloudfront"), requestPer10k: 0.0075, freeRequests: 0 };
+    expect(money(requestCost(10_000_000, { model: "cloudfront", freeTier: true, custom }))).toBe(7.5);
+    expect(isCustom({ model: "cloudfront", freeTier: true, custom })).toBe(true);
+    expect(decodeRates(encodeRates(custom))).toEqual(custom);
+    expect(decodeRates(encodeRates(defaultRates("cloudfront")))).toEqual(defaultRates("cloudfront"));
+    expect(encodeRates(defaultRates("cloudfront"))).toMatch(/\|r0\.01:10000000$/);
+  });
+
+  it("rejects bad request inputs", () => {
+    const d = { ...ratesToDraft(defaultRates("cloudfront")), requestPer10k: "-1", freeRequests: "1.5" };
+    const v = validateRates(d);
+    expect(v.ok).toBe(false);
+    expect(v.requestPriceError).toBeDefined();
+    expect(v.freeRequestsError).toBeDefined();
+    expect(decodeRates("1000|10000:0.085,inf:0.08|rabc:1")).toBeNull();
   });
 });

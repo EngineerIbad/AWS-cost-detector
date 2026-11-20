@@ -1,4 +1,4 @@
-import { activeRates, CURRENCY, getModel, isCustom, monthlyCostForBytes, type PricingOptions } from "./pricing";
+import { activeRates, CURRENCY, getModel, isCustom, monthlyCostForBytes, requestCost, type PricingOptions } from "./pricing";
 import { formatBytes, formatMoney, formatNumber, formatRatio } from "./format";
 import type { AnalysisResult } from "./types";
 
@@ -16,6 +16,8 @@ export interface CostRow {
 
 export interface CostSummary {
   rows: CostRow[];
+  /** Per-request fees for the month (CloudFront). The same for every format, so it never changes savings. */
+  requestCost: number;
   best: CostRow | null;
   today: CostRow;
   monthlySavings: number;
@@ -75,9 +77,11 @@ export function effectiveSizes(a: AnalysisResult, usePageAverages: boolean): Eff
  * and `usePageAverages = true` so each row uses the mean sampled page size.
  */
 export function computeCosts(a: AnalysisResult, monthlyRequests: number, pricing: PricingOptions, usePageAverages = false): CostSummary {
+  // Request fees depend on the number of requests, not their size, so every format pays the same.
+  const reqCost = requestCost(monthlyRequests, pricing);
   const make = (id: RowId, label: string, bytes: number | null, ms: number | null = null, note?: string): CostRow => {
     const monthlyBytes = bytes === null ? 0 : bytes * monthlyRequests;
-    const monthlyCost = bytes === null ? 0 : monthlyCostForBytes(monthlyBytes, pricing);
+    const monthlyCost = bytes === null ? 0 : monthlyCostForBytes(monthlyBytes, pricing) + reqCost;
     return { id, label, note, bytes, monthlyBytes, monthlyCost, annualCost: monthlyCost * 12, ms };
   };
 
@@ -99,7 +103,7 @@ export function computeCosts(a: AnalysisResult, monthlyRequests: number, pricing
   if (best && today.bytes !== null && today.bytes <= (best.bytes as number)) best = today;
 
   const monthlySavings = best ? Math.max(0, today.monthlyCost - best.monthlyCost) : 0;
-  return { rows, best, today, monthlySavings, annualSavings: monthlySavings * 12 };
+  return { rows, best, today, monthlySavings, annualSavings: monthlySavings * 12, requestCost: reqCost };
 }
 
 export function buildCopySummary(
@@ -143,6 +147,7 @@ export function buildCopySummary(
   } else {
     lines.push("No egress savings available at this traffic level.");
   }
+  if (s.requestCost > 0) lines.push(`Includes CloudFront request fees: ${formatMoney(s.requestCost, CURRENCY)}/month (the same for every format).`);
   lines.push(...extra);
   const model = getModel(pricing.model);
   lines.push(
