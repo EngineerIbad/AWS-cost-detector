@@ -1,9 +1,18 @@
+/**
+ * Every number the UI shows goes through here, so rounding is the same
+ * everywhere: Intl.NumberFormat (en-US, thousands separators), decimal units
+ * (1 KB = 1,000 B, 1 GB = 10^9 B, as AWS bills), and one rule for reductions.
+ */
 const UNITS = ["B", "KB", "MB", "GB", "TB", "PB"];
 
-/** Human-readable decimal sizes (1 KB = 1000 B), matching how AWS bills. */
+const intFmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+const usdFmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const decFmt = [0, 1, 2].map((d) => new Intl.NumberFormat("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }));
+
+/** Human-readable decimal sizes: "999 B", "1.50 KB", "33.6 KB", "7,200 GB" → "7.20 TB". */
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return "–";
-  if (bytes < 1000) return `${Math.round(bytes)} B`;
+  if (bytes < 1000) return `${intFmt.format(Math.round(bytes))} B`;
   let i = 0;
   let v = bytes;
   while (v >= 1000 && i < UNITS.length - 1) {
@@ -11,33 +20,55 @@ export function formatBytes(bytes: number): string {
     i++;
   }
   const digits = v >= 100 ? 0 : v >= 10 ? 1 : 2;
-  return `${v.toFixed(digits)} ${UNITS[i]}`;
+  return `${decFmt[digits].format(v)} ${UNITS[i]}`;
 }
 
 export function formatNumber(n: number): string {
-  return Math.round(n).toLocaleString("en-US");
+  return intFmt.format(Math.round(n));
 }
 
-/** Currency with 2 decimals. Uses the symbol for USD, else "123.45 EUR". */
-export function formatMoney(amount: number, currency: string): string {
+/** "$1,234.50". Non-USD currencies render as "1,234.50 EUR". */
+export function formatMoney(amount: number, currency = "USD"): string {
   const v = Number.isFinite(amount) ? amount : 0;
-  const num = v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  if (currency.toUpperCase() === "USD") return `$${num}`;
-  return `${num} ${currency}`;
+  if (currency.toUpperCase() === "USD") return usdFmt.format(v);
+  return `${decFmt[2].format(v)} ${currency}`;
 }
 
-/** "5.2x smaller, −81%" relative to a baseline. */
-export function formatRatio(baseline: number, bytes: number): string {
-  if (!(baseline > 0) || !(bytes >= 0)) return "";
-  if (bytes === baseline) return "same size";
-  if (bytes > baseline) {
-    const pct = ((bytes - baseline) / baseline) * 100;
-    return `+${pct.toFixed(0)}% larger`;
-  }
+export function formatPercent(fraction: number): string {
+  return `${intFmt.format(Math.round(fraction * 100))}%`;
+}
+
+/**
+ * The one rounding rule for "how much smaller". Ratio and percent both come
+ * from the same pair of byte counts: ratio to 1 decimal below 10x (else whole),
+ * percent to a whole number.
+ */
+export interface Reduction {
+  /** baseline / bytes. Infinity if bytes is 0. */
+  ratio: number;
+  /** 1 − bytes / baseline (negative if larger). */
+  fraction: number;
+  /** "3.7x" */
+  ratioText: string;
+  /** "73%" */
+  pctText: string;
+}
+
+export function sizeReduction(baseline: number, bytes: number): Reduction | null {
+  if (!(baseline > 0) || !(bytes >= 0)) return null;
   const ratio = bytes === 0 ? Infinity : baseline / bytes;
-  const pct = ((baseline - bytes) / baseline) * 100;
-  const r = !Number.isFinite(ratio) ? "∞" : ratio >= 10 ? ratio.toFixed(0) : ratio.toFixed(1);
-  return `${r}x smaller, −${pct.toFixed(0)}%`;
+  const fraction = 1 - bytes / baseline;
+  const ratioText = !Number.isFinite(ratio) ? "∞" : `${decFmt[ratio >= 10 ? 0 : 1].format(ratio)}x`;
+  return { ratio, fraction, ratioText, pctText: formatPercent(Math.abs(fraction)) };
+}
+
+/** "3.7x smaller, −73%" relative to a baseline. */
+export function formatRatio(baseline: number, bytes: number): string {
+  const r = sizeReduction(baseline, bytes);
+  if (!r) return "";
+  if (bytes === baseline) return "same size";
+  if (bytes > baseline) return `+${r.pctText} larger`;
+  return `${r.ratioText} smaller, −${r.pctText}`;
 }
 
 /** Parses "10,000,000" / "10M" / "1.5B" style input into an integer. */

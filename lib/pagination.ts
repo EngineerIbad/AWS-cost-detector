@@ -8,7 +8,7 @@ export const PAGINATION_PARAMS = ["skip", "offset", "page", "pageNumber", "p", "
 export const LIMIT_PARAMS = ["limit", "take", "size", "per_page", "perPage", "pageSize", "page_size"];
 export const MAX_SAMPLED_PAGES = 5;
 export const PAGE_DELAY_MS = 300;
-export const DEFAULT_PAGES_PER_SESSION = 5;
+export const DEFAULT_PAGES_PER_SESSION = 10;
 export const MAX_PAGES_PER_SESSION = 50;
 
 export type PaginationKind = "offset" | "page" | "cursor";

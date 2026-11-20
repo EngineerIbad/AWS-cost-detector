@@ -3,9 +3,9 @@ import { CurlParseError, normalizeUrl, parseCurl, type ParsedRequest } from "../
 import { clientIp, rateLimit } from "../../../lib/rateLimit";
 import { logSafeError } from "../../../lib/redact";
 import { MAX_REQUEST_BODY_BYTES, safeFetchFollow, SafeFetchError, TIMEOUT_MS } from "../../../lib/safeFetch";
-import { isValidParamName } from "../../../lib/pagination";
+import { isValidParamName, MAX_SAMPLED_PAGES } from "../../../lib/pagination";
 import { samplePages } from "../../../lib/sampler";
-import type { ApiError, ErrorField, PaginationResult } from "../../../lib/types";
+import type { AnalysisResult, ApiError, ErrorField, PaginationResult } from "../../../lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -125,67 +125,119 @@ export async function POST(request: Request) {
       paginationParam = param;
     }
 
-    // Follows up to 3 redirects; every hop is re-validated (scheme, port, DNS, IP ranges).
-    const res = await safeFetchFollow({ ...req, acceptEncoding: acceptEncodingHeader() });
+    const mode = input.mode;
+    const signal = request.signal;
 
-    // Only set when the final response is still a redirect (chain too long, or no Location).
-    let redirectTo: string | null = null;
-    if (res.status >= 300 && res.status < 400) {
-      if (res.location) {
-        try {
-          redirectTo = new URL(res.location, res.finalUrl).toString().slice(0, 300);
-        } catch {
-          redirectTo = res.location.slice(0, 300);
-        }
-      } else {
-        redirectTo = "another location";
-      }
-    }
-
-    const raw = decodeBody(res.wire, res.contentEncoding);
-
-    let pagination: PaginationResult | null = null;
-    if (paginationParam) {
-      // Same method, headers and body as page 1; only the URL's pagination
-      // param changes. Every page goes through safeFetch's full checks.
-      pagination = await samplePages({
-        firstUrl: req.url,
-        param: paginationParam,
-        firstPage: { status: res.status, raw, wireBytes: res.wire.length, contentType: res.contentType, link: res.link },
-        fetchPage: async (url) => {
+    // Paginated runs can stream progress ("Fetching page 2 of up to 5…") as
+    // NDJSON lines, then the result. Single requests stay plain JSON.
+    if (paginationParam && (input as { progress?: unknown }).progress === true) {
+      const enc = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          const send = (obj: unknown) => {
+            try {
+              controller.enqueue(enc.encode(JSON.stringify(obj) + "\n"));
+            } catch {
+              /* client went away */
+            }
+          };
           try {
-            const r = await safeFetchFollow({ ...req, url, acceptEncoding: acceptEncodingHeader(), deadline: Date.now() + TIMEOUT_MS });
-            return { status: r.status, raw: decodeBody(r.wire, r.contentEncoding), wireBytes: r.wire.length, contentType: r.contentType };
+            send({ type: "progress", page: 1, of: MAX_SAMPLED_PAGES });
+            const result = await measureLive(req, paginationParam, signal, (page) => send({ type: "progress", page, of: MAX_SAMPLED_PAGES }));
+            send({ type: "result", result });
           } catch (e) {
-            if (e instanceof SafeFetchError || e instanceof DecodeError) return { error: e.message };
-            return { error: "an unexpected error occurred" };
+            const ae = toApiError(e, mode);
+            send({ type: "error", status: ae.status, error: { code: ae.code, message: ae.message, field: ae.field } });
+          } finally {
+            try {
+              controller.close();
+            } catch {
+              /* already closed */
+            }
           }
         },
       });
+      return new Response(stream, { headers: { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store" } });
     }
 
-    const result = analyzeBody({
-      source: "live",
-      raw,
-      wireBytes: res.wire.length,
-      status: res.status,
-      contentType: res.contentType,
-      contentEncoding: res.contentEncoding,
-      vary: res.vary,
-      responseHeaders: res.headers,
-      redirectTo,
-      requestUrl: req.url,
-      pagination,
-    });
+    const result = await measureLive(req, paginationParam, signal);
     return Response.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
-    const field: ErrorField = input.mode === "curl" ? "curl" : input.mode === "payload" ? "json" : "url";
-    if (e instanceof SafeFetchError) {
-      const f = input.mode === "curl" || e.field === "url" || e.field === "general" ? field : e.field;
-      return err(e.httpStatus, e.code, e.message, f);
-    }
-    if (e instanceof DecodeError) return err(502, "decode_failed", e.message, field);
-    logSafeError("analyze", e);
-    return err(500, "internal", "Something went wrong on our side. Please try again.", field);
+    const ae = toApiError(e, input.mode);
+    return err(ae.status, ae.code, ae.message, ae.field);
   }
+}
+
+/** Fetch page 1 (following up to 3 re-vetted redirects), optionally sample more pages, and measure. */
+async function measureLive(
+  req: ParsedRequest,
+  paginationParam: string | null,
+  signal: AbortSignal,
+  onPage?: (n: number) => void,
+): Promise<AnalysisResult> {
+  // Follows up to 3 redirects; every hop is re-validated (scheme, port, DNS, IP ranges).
+  const res = await safeFetchFollow({ ...req, acceptEncoding: acceptEncodingHeader(), signal });
+
+  // Only set when the final response is still a redirect (chain too long, or no Location).
+  let redirectTo: string | null = null;
+  if (res.status >= 300 && res.status < 400) {
+    if (res.location) {
+      try {
+        redirectTo = new URL(res.location, res.finalUrl).toString().slice(0, 300);
+      } catch {
+        redirectTo = res.location.slice(0, 300);
+      }
+    } else {
+      redirectTo = "another location";
+    }
+  }
+
+  const raw = decodeBody(res.wire, res.contentEncoding);
+
+  let pagination: PaginationResult | null = null;
+  if (paginationParam) {
+    // Same method, headers and body as page 1; only the URL's pagination
+    // param changes. Every page goes through safeFetch's full checks.
+    pagination = await samplePages({
+      firstUrl: req.url,
+      param: paginationParam,
+      firstPage: { status: res.status, raw, wireBytes: res.wire.length, contentType: res.contentType, link: res.link },
+      signal,
+      onPage,
+      fetchPage: async (url) => {
+        try {
+          const r = await safeFetchFollow({ ...req, url, acceptEncoding: acceptEncodingHeader(), deadline: Date.now() + TIMEOUT_MS, signal });
+          return { status: r.status, raw: decodeBody(r.wire, r.contentEncoding), wireBytes: r.wire.length, contentType: r.contentType };
+        } catch (e) {
+          if (e instanceof SafeFetchError || e instanceof DecodeError) return { error: e.message };
+          return { error: "an unexpected error occurred" };
+        }
+      },
+    });
+  }
+
+  return analyzeBody({
+    source: "live",
+    raw,
+    wireBytes: res.wire.length,
+    status: res.status,
+    contentType: res.contentType,
+    contentEncoding: res.contentEncoding,
+    vary: res.vary,
+    responseHeaders: res.headers,
+    redirectTo,
+    requestUrl: req.url,
+    pagination,
+  });
+}
+
+function toApiError(e: unknown, mode: string): { status: number; code: string; message: string; field: ErrorField } {
+  const field: ErrorField = mode === "curl" ? "curl" : mode === "payload" ? "json" : "url";
+  if (e instanceof SafeFetchError) {
+    const f = mode === "curl" || e.field === "url" || e.field === "general" ? field : e.field;
+    return { status: e.httpStatus, code: e.code, message: e.message, field: f };
+  }
+  if (e instanceof DecodeError) return { status: 502, code: "decode_failed", message: e.message, field };
+  logSafeError("analyze", e);
+  return { status: 500, code: "internal", message: "Something went wrong on our side. Please try again.", field };
 }

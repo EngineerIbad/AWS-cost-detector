@@ -251,7 +251,7 @@ export function shareHeadline(s: ShareState): ShareHeadline {
   const today = moneyShort(sum.today.monthlyCost);
   const model = getModel(s.pricing.model);
   const reqs = shareMonthlyRequests(s);
-  const details = `${formatBytes(s.sizes.wire)} ${s.paging ? "avg page" : "response"} · ${formatNumber(reqs)} ${s.paging ? "page requests" : "requests"}/month · ${model.shortLabel}${isCustom(s.pricing) ? " (custom rates)" : ""}`;
+  const details = `${formatBytes(s.sizes.wire)} ${s.paging ? "avg page" : "response"} · ${formatNumber(reqs)} requests/month · ${model.shortLabel}${isCustom(s.pricing) ? " (custom rates)" : ""}`;
   const hasSaving = !!sum.best && sum.best.id !== "today" && sum.monthlySavings > 0.004;
   if (hasSaving) {
     const best = moneyShort(sum.best!.monthlyCost);

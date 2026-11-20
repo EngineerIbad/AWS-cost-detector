@@ -1,24 +1,33 @@
 :root {
+  /* Every maroon is #800020 mixed only with white (tints) or black (shades):
+       tint 10% #F2E6E9 · 14% #EDDBE0 · 30% #D9B3BC · 60% #B36679 · 80% #99334D
+       shade 75% #600018 · 35% #2D000B
+     Neutrals are the brand cream #F3E6D5 and off-white #FFF9F2.
+     Every text pair is WCAG AA (4.5:1); control borders are 3:1. */
   --primary: #800020;
-  --primary-hover: #66001a;
-  --primary-soft: #f6e3e3;
-  --surface: #f3e6d5;
-  --bg: #fff9f2;
-  --card: #fffdf9;
-  --text: #1f1a17;
-  --muted: #6b5e57;
-  --border: #e4d4c0;
-  --border-strong: #c9b49b;
-  --good: #2e6343; /* muted green, AA on light bg */
-  --good-bg: #e8f1ea;
+  --primary-hover: #600018; /* #800020 75% + black */
+  --primary-deep: #600018;
+  --primary-soft: #f2e6e9; /* #800020 10% + white */
+  --accent: #b36679; /* #800020 60% + white: bars, borders */
+  --cream-muted: #d9b3bc; /* #800020 30% + white: secondary bars */
+  --on-primary: #fff9f2;
+  --surface: #f3e6d5; /* brand cream */
+  --bg: #fff9f2; /* brand off-white */
+  --card: #fffdfa;
+  --text: #2d000b; /* #800020 35% + black, 15.3:1 on cream */
+  --muted: #99334d; /* #800020 80% + white, 5.8:1 on cream */
+  --border: #eddbe0; /* #800020 14% + white */
+  --border-strong: #b36679; /* 3.4:1 on cream */
+  --good: #800020;
+  --good-bg: #f2e6e9;
   --warn: #7a4e00;
   --warn-bg: #f8edd6;
-  --bad: #8f2a24; /* muted red */
-  --bad-bg: #f8e4e1;
+  --bad: #800020;
+  --bad-bg: #f2e6e9;
   --focus: #800020;
   --radius: 14px;
   --radius-sm: 9px;
-  --shadow: 0 1px 2px rgba(31, 26, 23, 0.05), 0 4px 16px rgba(31, 26, 23, 0.04);
+  --shadow: 0 1px 2px rgba(45, 0, 11, 0.05), 0 4px 16px rgba(45, 0, 11, 0.04);
   --font: var(--font-poppins), system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
@@ -79,14 +88,14 @@ p {
   left: 16px;
   top: -60px;
   background: var(--primary);
-  color: #fff;
-  padding: 8px 14px;
+  color: var(--on-primary);
+  padding: 12px 16px;
   border-radius: 8px;
   z-index: 10;
 }
 .skip-link:focus {
   top: 12px;
-  color: #fff;
+  color: var(--on-primary);
 }
 
 /* ---------- Page layout ---------- */
@@ -144,14 +153,8 @@ p {
     grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
     gap: 28px;
   }
-  .results {
-    position: sticky;
-    top: 20px;
-    max-height: calc(100vh - 40px);
-    overflow-y: auto;
-    padding: 0 4px 4px; /* room for focus rings */
-    scrollbar-width: thin;
-  }
+  /* One page scroll: the results column flows with the page. Only the compact
+     summary bar inside it is sticky (see .summary-bar). */
 }
 
 .card {
@@ -183,7 +186,7 @@ p {
   height: 26px;
   border-radius: 50%;
   background: var(--primary);
-  color: #fff;
+  color: var(--on-primary);
   font-size: 13px;
   font-weight: 600;
 }
@@ -208,7 +211,7 @@ p {
   padding: 9px 8px;
   border-radius: 8px;
   cursor: pointer;
-  min-height: 40px;
+  min-height: 44px;
 }
 .tab:hover {
   color: var(--text);
@@ -217,7 +220,7 @@ p {
   background: var(--card);
   color: var(--primary);
   font-weight: 600;
-  box-shadow: 0 1px 3px rgba(31, 26, 23, 0.1);
+  box-shadow: 0 1px 3px rgba(45, 0, 11, 0.1);
 }
 
 .panel {
@@ -350,7 +353,7 @@ textarea {
   font: inherit;
   font-size: 16px;
   font-weight: 600;
-  color: #fff;
+  color: var(--on-primary);
   background: var(--primary);
   border: 0;
   border-radius: var(--radius-sm);
@@ -373,7 +376,7 @@ textarea {
   border: 1.5px solid var(--border-strong);
   border-radius: var(--radius-sm);
   padding: 8px 14px;
-  min-height: 40px;
+  min-height: 44px;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -415,7 +418,7 @@ textarea {
   width: 18px;
   height: 18px;
   border: 2.5px solid rgba(255, 255, 255, 0.35);
-  border-top-color: #fff;
+  border-top-color: var(--on-primary);
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
 }
@@ -436,8 +439,8 @@ textarea {
   font-size: 14px;
   font-weight: 500;
   min-width: 56px;
-  min-height: 36px;
-  padding: 6px 14px;
+  min-height: 44px;
+  padding: 6px 16px;
   border-radius: 999px;
   border: 1.5px solid var(--border-strong);
   background: #fff;
@@ -450,7 +453,7 @@ textarea {
 .chip[aria-pressed="true"] {
   background: var(--primary);
   border-color: var(--primary);
-  color: #fff;
+  color: var(--on-primary);
 }
 
 /* ---------- Tooltip ---------- */
@@ -472,7 +475,7 @@ textarea {
 .tip-btn[aria-expanded="true"] {
   background: var(--primary);
   border-color: var(--primary);
-  color: #fff;
+  color: var(--on-primary);
 }
 .tip-pop {
   position: absolute;
@@ -487,7 +490,7 @@ textarea {
   background: var(--text);
   color: #fdf6ee;
   border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(31, 26, 23, 0.2);
+  box-shadow: 0 8px 24px rgba(45, 0, 11, 0.2);
 }
 
 /* ---------- Pricing ---------- */
@@ -585,14 +588,14 @@ textarea {
 
 .savings {
   background: var(--primary);
-  color: #fff;
+  color: var(--on-primary);
   border-radius: var(--radius);
   padding: 22px 22px 20px;
   box-shadow: var(--shadow);
 }
 .savings-neutral {
-  background: var(--surface);
-  color: var(--text);
+  background: var(--primary);
+  color: var(--on-primary);
 }
 .savings-kicker {
   font-size: 13px;
@@ -614,11 +617,6 @@ textarea {
   margin-top: 8px;
   font-size: 14px;
   opacity: 0.92;
-}
-.savings-neutral .savings-sub,
-.savings-neutral .savings-kicker {
-  color: var(--muted);
-  opacity: 1;
 }
 
 .notice {
@@ -664,7 +662,7 @@ textarea {
 }
 .cost-table tr.best td,
 .cost-table tr.best th {
-  border-bottom-color: #cfe0d4;
+  border-bottom-color: var(--border);
 }
 .cost-table tr.today .fmt-name {
   color: var(--primary);
@@ -688,7 +686,7 @@ textarea {
 .best-tag {
   font-size: 11px;
   font-weight: 600;
-  color: #fff;
+  color: var(--on-primary);
   background: var(--good);
   border-radius: 999px;
   padding: 1px 8px;
@@ -723,15 +721,15 @@ textarea {
 .bar-fill {
   display: block;
   height: 100%;
-  background: #b98b7b;
+  background: var(--cream-muted);
   border-radius: 999px;
   transition: width 0.4s ease-out;
 }
 .bars li.today .bar-fill {
-  background: var(--primary);
+  background: var(--accent);
 }
 .bars li.best .bar-fill {
-  background: var(--good);
+  background: var(--primary);
 }
 .bars li.best .bar-label,
 .bars li.today .bar-label {
@@ -765,10 +763,10 @@ textarea {
   border-left-color: var(--bad);
 }
 .finding.sev-medium {
-  border-left-color: #b5893a;
+  border-left-color: var(--accent);
 }
 .finding.sev-info {
-  border-left-color: var(--border-strong);
+  border-left-color: var(--cream-muted);
 }
 .sev {
   flex: none;
@@ -785,8 +783,8 @@ textarea {
   color: var(--bad);
 }
 .sev-tag-medium {
-  background: var(--warn-bg);
-  color: var(--warn);
+  background: var(--surface);
+  color: var(--primary);
 }
 .sev-tag-info {
   background: var(--surface);
@@ -830,10 +828,8 @@ textarea {
   background: var(--surface);
   border-radius: 8px;
   padding: 12px;
-  overflow-x: auto;
   white-space: pre-wrap;
   word-break: break-all;
-  max-height: 260px;
   margin: 8px 0;
 }
 .headers {
@@ -997,7 +993,7 @@ textarea {
   height: 20px;
   border-radius: 50%;
   background: #fff;
-  box-shadow: 0 1px 3px rgba(31, 26, 23, 0.25);
+  box-shadow: 0 1px 3px rgba(45, 0, 11, 0.25);
   transition: transform 0.15s;
 }
 .switch input:checked + .switch-track {
@@ -1296,4 +1292,611 @@ textarea {
 }
 .assumptions .notice {
   margin-top: 10px;
+}
+
+/* ================================================================== */
+/* Results flow, status and summary                                    */
+/* ================================================================== */
+.hero-hint {
+  margin-top: 10px;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--primary);
+}
+.step-intro {
+  font-size: 13px;
+  color: var(--muted);
+  margin: -6px 0 14px;
+}
+
+/* Status banner: loading / stale / error, above the results. */
+.status-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px 14px;
+  flex-wrap: wrap;
+  font-size: 14px;
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--primary);
+}
+.status-banner > span:not(.spinner) {
+  flex: 1 1 220px;
+}
+.status-error {
+  background: var(--bad-bg);
+  border-left-color: var(--bad);
+  color: var(--bad);
+}
+.spinner-dark {
+  border-color: rgba(128, 0, 32, 0.25);
+  border-top-color: var(--primary);
+}
+
+/* Everything under the banner dims while the inputs don't match the result. */
+.results-body {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  transition: opacity 0.2s;
+}
+/* Stale results keep their exact brand colours, so both columns always match.
+   The status banner above the results says they don't match the inputs. */
+.is-dimmed {
+  filter: none;
+}
+
+/* Compact summary bar. One slim line on a frosted off-white surface with a
+   burgundy accent, so it reads as lighter than the recommendation card. It only
+   appears while that card is off screen. Desktop: floats at the top of the
+   results column (zero-height sticky slot, no layout shift). Mobile: fixed to
+   the bottom of the screen. */
+.summary-slot {
+  position: sticky;
+  top: 12px;
+  height: 0;
+  z-index: 20;
+}
+.summary-bar {
+  --summary-accent: var(--primary);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 16px;
+  flex-wrap: wrap;
+  padding: 10px 16px 10px 18px;
+  border-radius: var(--radius);
+  background: rgba(255, 249, 242, 0.985);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 28px rgba(45, 0, 11, 0.14);
+  overflow: hidden;
+  color: var(--text);
+  opacity: 0;
+  transform: translateY(-6px);
+  pointer-events: none;
+  visibility: hidden;
+  transition: opacity 0.18s ease, transform 0.18s ease, visibility 0s linear 0.18s;
+}
+/* Accent stripe: a straight 4px edge, clipped by the bar's rounded corners. */
+.summary-bar::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--summary-accent);
+}
+.summary-bar.is-shown {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+  visibility: visible;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.summary-good {
+  --summary-accent: var(--primary);
+}
+.summary-neutral {
+  --summary-accent: var(--accent);
+}
+.summary-main {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+.summary-bar .summary-kicker {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.summary-big {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--summary-accent);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.summary-sub {
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 979px) {
+  .summary-slot {
+    position: static;
+    height: auto;
+  }
+  .summary-bar {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+    z-index: 20;
+    padding: 8px 14px 8px 16px;
+    gap: 0 12px;
+    transform: translateY(8px);
+  }
+  .summary-big {
+    font-size: 18px;
+  }
+  .summary-sub {
+    font-size: 12px;
+  }
+  /* Keep the on-screen keyboard, the field being typed in and the Measure button visible. */
+  .summary-bar.is-shown.kb-open,
+  .summary-bar.is-shown.near-measure {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+  .page {
+    padding-bottom: 84px;
+  }
+}
+
+/* Recommendation card variants */
+.savings-good {
+  background: var(--primary);
+}
+.savings-figure {
+  font-size: 15px;
+  margin-top: 8px;
+}
+.savings-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+.savings-chip {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.savings-secondary {
+  font-size: 13px;
+  margin-top: 8px;
+  opacity: 0.9;
+}
+
+/* Info tooltip (a toggletip: button + note) */
+.infotip {
+  position: relative;
+  display: inline-flex;
+}
+.infotip-btn {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  font-style: italic;
+  cursor: pointer;
+}
+/* Invisible 44x44 hit area around small round buttons. */
+.infotip-btn::after,
+.tip-btn::after {
+  content: "";
+  position: absolute;
+  inset: -10px;
+}
+.tip-btn {
+  position: relative;
+}
+.infotip-pop {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 8px);
+  transform: translateX(-50%);
+  z-index: 30;
+  width: min(300px, calc(100vw - 48px));
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 400;
+  box-shadow: var(--shadow);
+}
+
+/* Client mix editor */
+.mix {
+  margin-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.25);
+  padding-top: 8px;
+}
+
+.mix-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  font: inherit;
+  font-size: 13px;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.mix-edit {
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  flex: none;
+}
+.mix-body {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-top: 4px;
+  background: var(--card);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+}
+.mix-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px 64px;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+.mix-format {
+  color: var(--muted);
+  font-size: 13px;
+}
+.mix-input {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.mix-input input {
+  min-height: 44px;
+  padding: 6px 8px;
+  text-align: right;
+}
+.mix-bytes {
+  text-align: right;
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.mix-hint {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* Notices */
+.notice-info {
+  background: var(--surface);
+  color: var(--text);
+}
+
+/* Cost table: collapsed-duplicate note */
+.fmt-merge {
+  display: block;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--good);
+  margin-top: 2px;
+}
+
+/* Disclosure sections (closed by default) */
+.disclosure-card {
+  padding: 0;
+}
+.disclosure-heading {
+  font-size: 16px;
+  font-weight: 600;
+}
+.disclosure-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 52px;
+  padding: 12px 20px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text);
+  background: none;
+  border: 0;
+  border-radius: var(--radius);
+  text-align: left;
+  cursor: pointer;
+}
+.disclosure-btn .chev {
+  color: var(--primary);
+  flex: none;
+  transition: transform 0.15s;
+}
+.disclosure-btn[aria-expanded="true"] .chev {
+  transform: rotate(90deg);
+}
+.disclosure-summary {
+  margin-left: auto;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.disclosure-body {
+  padding: 0 20px 18px;
+  display: grid;
+  gap: 12px;
+}
+/* The assumptions card already has its own frame inside a disclosure. */
+.disclosure-body > .card {
+  border: 0;
+  padding: 0;
+  box-shadow: none;
+  background: transparent;
+}
+.disclosure-body > .card .pricing-head {
+  display: none;
+}
+
+/* Step 1: measure actions, curl confirmation, notes */
+.measure-actions {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+}
+.measure-actions .btn-primary {
+  flex: 1;
+}
+.measure-actions .btn-ghost {
+  min-height: 48px;
+  margin-top: 4px;
+}
+.measure-note {
+  margin-top: 10px;
+  font-size: 14px;
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+}
+.measure-note-warn {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+.measure-note-info {
+  background: var(--surface);
+  color: var(--text);
+}
+.curl-preview {
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+  border-radius: 8px;
+  padding: 8px 10px;
+  overflow-wrap: anywhere;
+}
+.curl-preview code {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.curl-preview-label {
+  font-weight: 600;
+  color: var(--good);
+}
+.curl-preview-warn {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+/* Mobile: 16px inputs so iOS doesn't zoom on focus; 44px targets. */
+@media (max-width: 640px) {
+  input[type="text"],
+  input[type="password"],
+  input[type="number"],
+  select,
+  textarea {
+    font-size: 16px;
+  }
+  .disclosure-btn {
+    padding: 12px 16px;
+  }
+  .disclosure-body {
+    padding: 0 16px 16px;
+  }
+  .mix-row {
+    grid-template-columns: minmax(0, 1fr) 88px;
+  }
+  .mix-bytes {
+    display: none;
+  }
+  .summary-sub {
+    font-size: 12px;
+  }
+}
+.savings-headline {
+  font-size: clamp(17px, 2.2vw, 20px);
+  line-height: 1.35;
+  letter-spacing: 0;
+}
+.savings-figure strong {
+  font-size: 18px;
+}
+/* `hidden` must win over the display rules above. */
+.disclosure-body[hidden],
+[hidden] {
+  display: none !important;
+}
+
+/* ================================================================== */
+/* Selects: one consistent burgundy chevron in every browser          */
+/* ================================================================== */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 38px;
+  background-color: var(--on-primary);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23800020' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  background-size: 12px 8px;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+select::-ms-expand {
+  display: none;
+}
+
+/* Method + URL: same height, labels and inputs on one baseline. */
+.field-row {
+  align-items: flex-end;
+}
+.field-row > .field {
+  min-width: 0;
+}
+.method-field {
+  flex: 0 0 120px;
+}
+.field-row select,
+.field-row input {
+  height: 48px;
+}
+
+/* Results header: title left, Copy button right; wraps cleanly on small screens. */
+.results-head > div:first-child {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.copy-wrap {
+  justify-items: start;
+  flex: none;
+}
+
+/* ================================================================== */
+/* Toast                                                               */
+/* ================================================================== */
+.toast-region {
+  position: fixed;
+  left: 50%;
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 50;
+  width: min(460px, calc(100vw - 32px));
+  pointer-events: none;
+}
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 8px 10px 16px;
+  border-radius: var(--radius);
+  background: var(--primary);
+  color: var(--bg);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  box-shadow: 0 10px 30px rgba(45, 0, 11, 0.28);
+  pointer-events: auto;
+  animation: toastIn 0.22s ease-out;
+}
+.toast svg {
+  flex: none;
+  color: var(--surface);
+}
+.toast span {
+  flex: 1;
+}
+.toast-error {
+  background: var(--bad);
+}
+.toast-close {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.toast-close:hover {
+  background: rgba(255, 249, 242, 0.14);
+}
+.toast-close:focus-visible {
+  outline: 3px solid var(--bg);
+  outline-offset: -3px;
+}
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* On mobile, sit above the fixed summary bar. */
+@media (max-width: 979px) {
+  .toast-region {
+    bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+  }
+}
+/* Keep Method + URL on one row on phones too. */
+.field-row > .field.grow {
+  flex: 1 1 150px;
+}
+@media (max-width: 640px) {
+  .method-field {
+    flex: 0 0 100px;
+  }
+}
+
+/* Labels on burgundy use brand cream. */
+.savings-kicker {
+  color: var(--surface);
+  opacity: 1;
 }

@@ -40,6 +40,10 @@ export interface SampleOptions {
   /** Don't start another page after this many ms. Keeps the whole analysis inside the function timeout. */
   budgetMs?: number;
   now?: () => number;
+  /** Called just before page `n` (2..MAX) is requested, for progress messages. */
+  onPage?: (n: number) => void;
+  /** Stop before the next page when the user cancels. */
+  signal?: AbortSignal;
 }
 
 const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -92,9 +96,12 @@ export async function samplePages(o: SampleOptions): Promise<PaginationResult> {
     if (!sameEndpoint(o.firstUrl, next.url)) return finish(`stopped after page ${n - 1}: the next page would change the host or path`);
     if (now() - started > budget) return finish(`stopped after page ${n - 1} to stay within the time limit`);
     if (outbound >= MAX_SAMPLED_PAGES) break; // hard cap, belt and braces
+    if (o.signal?.aborted) return finish(`stopped after page ${n - 1}: cancelled`);
 
     await sleep(PAGE_DELAY_MS);
+    if (o.signal?.aborted) return finish(`stopped after page ${n - 1}: cancelled`);
     outbound++;
+    o.onPage?.(n);
     const res = await o.fetchPage(next.url);
     if ("error" in res) return finish(`page ${n} failed: ${res.error}`);
 

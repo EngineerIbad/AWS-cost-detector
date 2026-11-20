@@ -107,6 +107,8 @@ const timeoutError = () =>
     504,
   );
 
+export const cancelledError = () => new SafeFetchError("cancelled", "Measurement cancelled.", "general", 499);
+
 const privateError = () =>
   new SafeFetchError(
     "private_address",
@@ -169,6 +171,8 @@ export interface SafeRequest {
   acceptEncoding: string;
   /** Absolute deadline (ms epoch). Defaults to now + TIMEOUT_MS. Shared across redirect hops. */
   deadline?: number;
+  /** Aborts the request when the user cancels (the browser disconnects). */
+  signal?: AbortSignal;
 }
 
 export interface SafeResponse {
@@ -213,6 +217,7 @@ export async function safeFetch(req: SafeRequest): Promise<SafeResponse> {
     throw new SafeFetchError("body_too_large", "The request body is over 100 KB. Send a smaller sample body.", "body");
   }
 
+  if (req.signal?.aborted) throw cancelledError();
   const target = await vetTarget(req.url, deadline);
   const headers: Record<string, string> = sanitizeRequestHeaders(req.headers);
   if (!Object.keys(headers).some((k) => k.toLowerCase() === "user-agent")) headers["User-Agent"] = "API-Egress-Cost-Calculator/1.0";
@@ -234,10 +239,12 @@ export async function safeFetch(req: SafeRequest): Promise<SafeResponse> {
 
   return new Promise<SafeResponse>((resolve, reject) => {
     let settled = false;
+    const onAbort = () => fail(cancelledError());
     const fail = (e: SafeFetchError) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      req.signal?.removeEventListener("abort", onAbort);
       request.destroy();
       reject(e);
     };
@@ -281,6 +288,7 @@ export async function safeFetch(req: SafeRequest): Promise<SafeResponse> {
           if (settled) return;
           settled = true;
           clearTimeout(timer);
+          req.signal?.removeEventListener("abort", onAbort);
           const safeHeaders: Record<string, string> = {};
           for (const h of SAFE_RESPONSE_HEADERS) {
             const v = res.headers[h];
@@ -307,6 +315,7 @@ export async function safeFetch(req: SafeRequest): Promise<SafeResponse> {
     );
 
     const timer = setTimeout(() => fail(timeoutError()), Math.max(0, deadline - Date.now()));
+    req.signal?.addEventListener("abort", onAbort, { once: true });
 
     request.on("error", (err: NodeJS.ErrnoException) => {
       const code = err?.code ?? "";
@@ -356,7 +365,7 @@ export async function safeFetchFollow(
     try {
       res = await fetchOnce(cur);
     } catch (e) {
-      if (hop > 0 && e instanceof SafeFetchError && e.code !== "timeout" && e.code !== "network") {
+      if (hop > 0 && e instanceof SafeFetchError && !["timeout", "network", "cancelled"].includes(e.code)) {
         throw new SafeFetchError(e.code, `The API redirected somewhere we can't fetch. ${e.message}`, e.field, e.httpStatus);
       }
       throw e;

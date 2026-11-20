@@ -26,13 +26,14 @@ interface Props {
   step?: number;
   onShare?: () => void;
   shareDisabled?: boolean;
-  shareMsg?: string;
+  /** One line under the heading, e.g. "Adjust the estimate — updates instantly." */
+  intro?: string;
   children?: React.ReactNode;
 }
 
 const MODEL_IDS = Object.keys(PRICING_MODELS) as PricingModelId[];
 
-export default function PricingPanel({ pricing, onChange, onRatesChange, editorKey, step,onShare, shareDisabled, shareMsg, children }: Props) {
+export default function PricingPanel({ pricing, onChange, onRatesChange, editorKey, step, onShare, shareDisabled, intro, children }: Props) {
   const model = getModel(pricing.model);
   const idPrefix = step ? "calc" : "shared";
   return (
@@ -45,6 +46,7 @@ export default function PricingPanel({ pricing, onChange, onRatesChange, editorK
         ) : null}{" "}
         Pricing
       </h2>
+      {intro && <p className="step-intro">{intro}</p>}
 
       <fieldset className="choice-group">
         <legend>How is this served?</legend>
@@ -92,9 +94,6 @@ export default function PricingPanel({ pricing, onChange, onRatesChange, editorK
           <button type="button" className="btn-ghost" onClick={onShare} disabled={shareDisabled}>
             Share this setup
           </button>
-          <span className="share-msg" role="status">
-            {shareMsg}
-          </span>
         </div>
       )}
     </div>

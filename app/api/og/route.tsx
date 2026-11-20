@@ -10,8 +10,9 @@ const C = {
   primary: "#800020",
   surface: "#F3E6D5",
   bg: "#FFF9F2",
-  text: "#1F1A17",
-  muted: "#6B5E57",
+  text: "#2D000B",
+  muted: "#99334D",
+  accent: "#B36679", // burgundy-soft: the "today" figure and bar
 };
 
 let fontsPromise: Promise<{ name: string; data: Buffer; weight: 400 | 600 | 700; style: "normal" }[]> | null = null;
@@ -37,7 +38,7 @@ function fonts() {
 function Arrow({ size }: { size: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" style={{ margin: "0 20px" }}>
-      <path d="M4 12h15M13 6l6 6-6 6" fill="none" stroke={C.muted} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4 12h15M13 6l6 6-6 6" fill="none" stroke={C.accent} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -105,7 +106,7 @@ function SharedCard({ h, todayCost, bestCost }: { h: ReturnType<typeof shareHead
       <Brand />
       <div style={{ fontSize: 28, color: C.muted, marginTop: 34 }}>Estimated AWS data transfer, per month</div>
       <div style={{ display: "flex", alignItems: "center", marginTop: 4 }}>
-        <div style={{ fontSize: 112, fontWeight: 700, color: h.best ? C.muted : C.primary, lineHeight: 1.1 }}>{h.today}</div>
+        <div style={{ fontSize: 112, fontWeight: 700, color: h.best ? C.accent : C.primary, lineHeight: 1.1 }}>{h.today}</div>
         {h.best ? (
           <div style={{ display: "flex", alignItems: "center" }}>
             <Arrow size={72} />
@@ -123,7 +124,7 @@ function SharedCard({ h, todayCost, bestCost }: { h: ReturnType<typeof shareHead
         <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
           <div style={{ width: 170, fontSize: 22, color: C.muted }}>Today</div>
           <div style={{ display: "flex", width: 760, height: 26, background: C.surface, borderRadius: 8 }}>
-            <div style={{ width: "100%", height: 26, background: h.best ? C.muted : C.primary, borderRadius: 8 }} />
+            <div style={{ width: "100%", height: 26, background: h.best ? C.accent : C.primary, borderRadius: 8 }} />
           </div>
         </div>
         {h.best ? (

@@ -109,6 +109,8 @@ export function buildCopySummary(
   pricing: PricingOptions,
   link?: string,
   sessions?: SessionTraffic | null,
+  /** Extra lines (e.g. the client-mix estimate) placed before the pricing note. */
+  extra: string[] = [],
 ): string {
   const lines: string[] = [];
   const paged = !!sessions;
@@ -116,7 +118,7 @@ export function buildCopySummary(
   lines.push("API Egress Cost Calculator");
   if (sessions) {
     lines.push(
-      `Traffic: ${formatNumber(sessions.sessions)} sessions/month × ${sessions.pagesPerSession} pages = ${formatNumber(monthlyRequests)} page requests/month`,
+      `Traffic: ${formatNumber(sessions.sessions)} sessions/month × ${sessions.pagesPerSession} pages per session = ${formatNumber(monthlyRequests)} requests/month`,
     );
     const sampled = a.pagination?.pages.length ?? 1;
     lines.push(`Pages sampled: ${sampled}${sessions.pagesPerSession > sampled ? ` (extrapolated to ${sessions.pagesPerSession})` : ""}`);
@@ -137,10 +139,11 @@ export function buildCopySummary(
   }
   lines.push("");
   if (s.best && s.best.id !== "today" && s.monthlySavings > 0) {
-    lines.push(`Switching to ${s.best.label} could save ${formatMoney(s.monthlySavings, CURRENCY)}/month (${formatMoney(s.annualSavings, CURRENCY)}/year).`);
+    lines.push(`Best case, every client on ${s.best.label}: save ${formatMoney(s.monthlySavings, CURRENCY)}/month (${formatMoney(s.annualSavings, CURRENCY)}/year).`);
   } else {
     lines.push("No egress savings available at this traffic level.");
   }
+  lines.push(...extra);
   const model = getModel(pricing.model);
   lines.push(
     `Pricing: ${model.scope}, tiered per month, free tier ${pricing.freeTier ? `applied (${activeRates(pricing).freeGB.toLocaleString("en-US")} GB)` : "not applied"}. ${

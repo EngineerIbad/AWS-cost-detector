@@ -1,8 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { errorBucket, track, trafficBucket } from "../lib/analytics";
 import { looksLikeCurl, normalizeUrl, parseCurl, CurlParseError } from "../lib/curl";
+import { describeHeaders, previewCurl, SUPPORTED_METHODS } from "../lib/curlPreview";
 import { DEMOS, type DemoId } from "../lib/demo";
+import { announceEstimate, buildEstimate, DEFAULT_CLIENT_MIX, type ClientMix } from "../lib/estimate";
 import { compactCount, formatNumber, parseCount } from "../lib/format";
 import {
   DEFAULT_PAGES_PER_SESSION,
@@ -13,12 +16,13 @@ import {
   PAGINATION_PARAMS,
   pageRequests,
 } from "../lib/pagination";
-import { decodeRates, DEFAULT_PRICING, encodeRates, isPricingModelId, type ModelRates, type PricingModelId, type PricingOptions } from "../lib/pricing";
+import { decodeRates, DEFAULT_PRICING, encodeRates, isCustom, isPricingModelId, type ModelRates, type PricingModelId, type PricingOptions } from "../lib/pricing";
 import { sharePath, shareStateFromResult } from "../lib/share";
 import type { AnalysisResult, ApiError, ErrorField } from "../lib/types";
 import PricingPanel from "./PricingPanel";
 import Results from "./Results";
 import SiteFooter from "./SiteFooter";
+import ToastHost, { showToast } from "./Toast";
 
 type Tab = "curl" | "form" | "demo";
 const TABS: { id: Tab; label: string }[] = [
@@ -27,10 +31,10 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "demo", label: "Demo" },
 ];
 const METHODS = ["GET", "POST", "PUT", "PATCH"] as const;
-const PRESETS = [1e6, 1e7, 1e8, 1e9];
-const SESSION_PRESETS = [1e5, 1e6, 1e7, 1e8];
-const DEFAULT_REQUESTS = 10_000_000;
-const DEFAULT_SESSIONS = 5_000_000;
+const PRESETS = [1e5, 1e6, 1e7];
+const SESSION_PRESETS = [1e4, 1e5, 1e6];
+const DEFAULT_REQUESTS = 1_000_000;
+const DEFAULT_SESSIONS = 100_000;
 const MAX_REQUESTS = 1e13;
 const MAX_BODY_BYTES = 100 * 1024;
 
@@ -43,6 +47,7 @@ const LS = {
   paginated: "aecc:paginated",
   pps: "aecc:pagesPerSession",
   sessions: "aecc:sessions",
+  mix: "aecc:clientMix",
 };
 
 function lsGet(key: string): string | null {
@@ -62,8 +67,14 @@ function lsSet(key: string, value: string | null) {
 }
 
 type CustomRatesMap = Partial<Record<PricingModelId, ModelRates>>;
+type Errors = Partial<Record<ErrorField | "requests" | "sessions" | "pps", string>>;
 
-type Errors =Partial<Record<ErrorField | "requests" | "sessions" | "pps", string>>;
+/** What produced the result on screen, and the exact inputs at that moment. */
+interface ResultMeta {
+  kind: "demo" | "paste" | "curl" | "form";
+  signature: string;
+}
+export type ResultStatus = "empty" | "loading" | "success" | "error" | "stale";
 
 /** Pre-computed demo analyses. `socialPaged` is the social feed as 5 cursor pages. */
 export type DemoResults = Record<DemoId, AnalysisResult> & { socialPaged: AnalysisResult };
@@ -72,13 +83,28 @@ interface Props {
   demoResults: DemoResults;
 }
 
+/** Specific, plain-language titles for server error codes. */
+const ERROR_TITLES: Record<string, string> = {
+  curl_parse: "Invalid curl",
+  bad_method: "Unsupported method",
+  private_address: "Blocked address",
+  credentials_in_url: "Credentials in URL",
+  bad_scheme: "Unsupported URL",
+  bad_port: "Port not allowed",
+  timeout: "Timed out",
+  response_too_large: "Response too large",
+  body_too_large: "Request body too large",
+  dns_failed: "Host not found",
+  network: "Couldn't connect",
+  decode_failed: "Couldn't decode the response",
+};
+function errorText(code: string | undefined, message: string): string {
+  const title = code ? ERROR_TITLES[code] : undefined;
+  return title ? `${title}: ${message}` : message;
+}
+
 /** Shared handler for the thousands-separated count inputs (requests, sessions). */
-function handleCountInput(
-  v: string,
-  setText: (s: string) => void,
-  setValue: (n: number) => void,
-  setError: (msg: string | null) => void,
-) {
+function handleCountInput(v: string, setText: (s: string) => void, setValue: (n: number) => void, setError: (msg: string | null) => void) {
   if (/^[\d,\s]*$/.test(v)) {
     const n = parseCount(v);
     setText(n === null ? "" : formatNumber(n));
@@ -100,6 +126,9 @@ function handleCountInput(
   }
 }
 
+const demoLabel = (id: DemoId, paged = false) =>
+  id === "social" && paged ? "Example: Social media feed (5 pages × 10 posts)" : `Example: ${DEMOS.find((d) => d.id === id)!.label}`;
+
 export default function App({ demoResults }: Props) {
   const [tab, setTab] = useState<Tab>("demo");
   const tabRefs = useRef<Record<Tab, HTMLButtonElement | null>>({ curl: null, form: null, demo: null });
@@ -115,20 +144,24 @@ export default function App({ demoResults }: Props) {
   const [pasteJson, setPasteJson] = useState("");
   const [servedAs, setServedAs] = useState<"identity" | "gzip" | "br">("identity");
   const curlRef = useRef<HTMLTextAreaElement>(null);
+  const requestsRef = useRef<HTMLInputElement>(null);
 
-  // Results
+  // Result + measurement state
   const [result, setResult] = useState<AnalysisResult | null>(demoResults.social);
-  const [resultLabel, setResultLabel] = useState(`Demo · ${DEMOS[0].label}`);
+  const [resultLabel, setResultLabel] = useState(demoLabel("social"));
+  const [resultMeta, setResultMeta] = useState<ResultMeta>({ kind: "demo", signature: "demo|social" });
   const [resultKey, setResultKey] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState("");
+  const [lastError, setLastError] = useState<string | null>(null);
+  const [measureNote, setMeasureNote] = useState<{ tone: "warn" | "info"; text: string } | null>(null);
   const [errors, setErrors] = useState<Errors>({});
   const [announce, setAnnounce] = useState("");
+  const abortRef = useRef<{ ctrl: AbortController; cancelled: boolean } | null>(null);
 
-  // Traffic + pricing
+  // Traffic
   const [requests, setRequests] = useState(DEFAULT_REQUESTS);
   const [requestsText, setRequestsText] = useState(formatNumber(DEFAULT_REQUESTS));
-
-  // Pagination
   const [paginated, setPaginated] = useState(false);
   const [paramName, setParamName] = useState("");
   const [pps, setPps] = useState(DEFAULT_PAGES_PER_SESSION);
@@ -136,15 +169,14 @@ export default function App({ demoResults }: Props) {
   const [sessions, setSessions] = useState(DEFAULT_SESSIONS);
   const [sessionsText, setSessionsText] = useState(formatNumber(DEFAULT_SESSIONS));
   const lastDetected = useRef<string | null>(null);
+
+  // Pricing
   const [pricingBase, setPricingBase] = useState<Pick<PricingOptions, "model" | "freeTier">>(DEFAULT_PRICING);
   /** Visitor-entered rates, kept per model so switching models doesn't lose them. */
   const [customRates, setCustomRates] = useState<CustomRatesMap>({});
-  const pricing: PricingOptions = useMemo(
-    () => ({ ...pricingBase, custom: customRates[pricingBase.model] ?? null }),
-    [pricingBase, customRates],
-  );
+  const pricing: PricingOptions = useMemo(() => ({ ...pricingBase, custom: customRates[pricingBase.model] ?? null }), [pricingBase, customRates]);
+  const [mix, setMix] = useState<ClientMix>(DEFAULT_CLIENT_MIX);
   const [hydrated, setHydrated] = useState(false);
-  const [shareMsg, setShareMsg] = useState("");
 
   /* ---------- restore state: legacy URL params > localStorage > defaults ---------- */
   useEffect(() => {
@@ -158,7 +190,6 @@ export default function App({ demoResults }: Props) {
       setRequests(n);
       setRequestsText(formatNumber(n));
     }
-
     const pg = params.get("pg") ?? lsGet(LS.paginated);
     if (pg === "1" || pg === "0") setPaginated(pg === "1");
     const ppsRaw = params.get("pps") ?? lsGet(LS.pps);
@@ -174,22 +205,22 @@ export default function App({ demoResults }: Props) {
       setSessionsText(formatNumber(sN));
     }
 
-    // Old ?p= (custom tier) links are ignored.
     const m = lsGet(LS.model);
     const ft = lsGet(LS.freeTier);
     setPricingBase({
       model: isPricingModelId(m) ? m : DEFAULT_PRICING.model,
       freeTier: ft === "0" ? false : ft === "1" ? true : DEFAULT_PRICING.freeTier,
     });
-    // Saved custom rates, stored as share-link strings and re-validated on load.
     try {
       const saved = JSON.parse(lsGet(LS.rates) ?? "{}") as Record<string, unknown>;
       const restored: CustomRatesMap = {};
       for (const [id, enc] of Object.entries(saved)) {
-        const r = isPricingModelId(id) && typeof enc === "string" ? decodeRates(enc) : null;
-        if (r && isPricingModelId(id)) restored[id] = r;
+        const rr = isPricingModelId(id) && typeof enc === "string" ? decodeRates(enc) : null;
+        if (rr && isPricingModelId(id)) restored[id] = rr;
       }
       setCustomRates(restored);
+      const mx = JSON.parse(lsGet(LS.mix) ?? "null") as ClientMix | null;
+      if (mx && [mx.web, mx.ios, mx.android].every((v) => typeof v === "number" && v >= 0 && v <= 100)) setMix(mx);
     } catch {
       /* ignore corrupt storage */
     }
@@ -219,13 +250,14 @@ export default function App({ demoResults }: Props) {
     for (const [id, r] of Object.entries(customRates)) if (r) out[id] = encodeRates(r);
     lsSet(LS.rates, Object.keys(out).length ? JSON.stringify(out) : null);
   }, [customRates, hydrated]);
+  useEffect(() => {
+    if (hydrated) lsSet(LS.mix, JSON.stringify(mix));
+  }, [mix, hydrated]);
 
   /* ------------------------ pagination detection ------------------------ */
+  const curlPreview = useMemo(() => (tab === "curl" ? previewCurl(curlText) : null), [tab, curlText]);
   const activeUrl = useMemo(() => {
-    if (tab === "form") {
-      const u = normalizeUrl(url);
-      return u || null;
-    }
+    if (tab === "form") return normalizeUrl(url) || null;
     if (tab === "curl" && curlText.trim()) {
       try {
         return parseCurl(curlText).url;
@@ -249,6 +281,21 @@ export default function App({ demoResults }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detectedParam]);
 
+  /* ---------------------- result state (stale detection) ---------------------- */
+  /** A fingerprint of the inputs that a measurement depends on. Traffic and pricing are not part of it. */
+  const signature = useMemo(() => {
+    const pg = paginated ? paramName.trim() : "";
+    if (tab === "curl") return `curl|${curlText.trim()}|${pg}`;
+    if (tab === "form") return `form|${method}|${normalizeUrl(url)}|${token.trim()}|${method !== "GET" ? body : ""}|${pg}`;
+    return demoId === "paste" ? `paste|${pasteJson}|${servedAs}` : `demo|${demoId}`;
+  }, [tab, curlText, method, url, token, body, demoId, pasteJson, servedAs, paginated, paramName]);
+
+  const stale = !!result && resultMeta.signature !== signature;
+  const status: ResultStatus = loading ? "loading" : lastError ? "error" : !result ? "empty" : stale ? "stale" : "success";
+
+  // An old error stops being "the" state once the inputs change.
+  useEffect(() => setLastError(null), [signature]);
+
   /* ---------------------------- tabs ---------------------------- */
   const onTabKey = (e: React.KeyboardEvent) => {
     const idx = TABS.findIndex((t) => t.id === tab);
@@ -266,46 +313,142 @@ export default function App({ demoResults }: Props) {
 
   const clearError = (f: keyof Errors) => setErrors((e) => (e[f] ? { ...e, [f]: undefined } : e));
 
-  /* ---------------------------- analyze ---------------------------- */
-  const showResult = useCallback((r: AnalysisResult, label: string) => {
+  /* ---------------------------- measure ---------------------------- */
+  const showResult = useCallback((r: AnalysisResult, label: string, meta: ResultMeta) => {
     setResult(r);
     setResultLabel(label);
+    setResultMeta(meta);
     setResultKey((k) => k + 1);
-    const n = r.findings.length;
-    setAnnounce(`Analysis complete for ${label}. ${n} recommendation${n === 1 ? "" : "s"}.`);
   }, []);
 
-  async function callApi(payload: unknown, label: string, field: ErrorField) {
+  const pageReqs = pageRequests(sessions, pps);
+  /** What the cost table multiplies by: requests, or sessions × pages per session. */
+  const effectiveRequests = paginated ? pageReqs : requests;
+
+  // The social demo has a paginated twin; show whichever matches the toggle.
+  const isSocialDemo = result === demoResults.social || result === demoResults.socialPaged;
+  const displayed = isSocialDemo ? (paginated ? demoResults.socialPaged : demoResults.social) : result;
+  const displayedLabel = isSocialDemo ? demoLabel("social", paginated) : resultLabel;
+
+  // Announce each new result once: "Estimated savings: $46.83 per month."
+  useEffect(() => {
+    if (resultKey === 0 || !displayed) return;
+    setAnnounce(announceEstimate(buildEstimate(displayed, effectiveRequests, pricing, paginated, mix)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resultKey]);
+
+  function cancelMeasure() {
+    if (!abortRef.current) return;
+    abortRef.current.cancelled = true;
+    abortRef.current.ctrl.abort();
+  }
+
+  async function callApi(payload: Record<string, unknown>, label: string, field: ErrorField, meta: ResultMeta) {
+    cancelMeasure();
+    const ctrl = new AbortController();
+    const run = { ctrl, cancelled: false };
+    abortRef.current = run;
+    let timedOut = false;
+    const live = meta.kind === "curl" || meta.kind === "form";
+    const pagedRun = live && !!payload.pagination;
+    const t = setTimeout(() => {
+      timedOut = true;
+      ctrl.abort();
+    }, pagedRun ? 45_000 : 25_000);
+
     setLoading(true);
     setErrors({});
-    setAnnounce("Analyzing…");
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), paginated ? 40_000 : 25_000);
+    setLastError(null);
+    setMeasureNote(null);
+    setProgress(pagedRun ? `Fetching page 1 of up to ${MAX_SAMPLED_PAGES}…` : live ? "Fetching your API…" : "Measuring your sample…");
+    setAnnounce("Measuring…");
+
+    const fail = (code: string | undefined, message: string, f: ErrorField) => {
+      const text = errorText(code, message);
+      setErrors({ [f]: text });
+      setLastError(text);
+      setAnnounce(`Error: ${text}`);
+      if (live) track("curl_measured", { mode: meta.kind as "curl" | "form", outcome: "error", error: errorBucket(code), paginated: pagedRun });
+    };
+
     try {
       const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(pagedRun ? { ...payload, progress: true } : payload),
         signal: ctrl.signal,
       });
-      const data = (await res.json().catch(() => null)) as AnalysisResult | ApiError | null;
-      if (!res.ok || !data || "error" in data) {
-        const e = data && "error" in data ? data.error : null;
-        const msg = e?.message ?? "Something went wrong. Please try again.";
-        setErrors({ [e?.field ?? field]: msg });
-        setAnnounce(`Error: ${msg}`);
+      let data: AnalysisResult | null = null;
+      let apiErr: ApiError["error"] | null = null;
+
+      if ((res.headers.get("content-type") ?? "").includes("ndjson") && res.body) {
+        // Paginated runs stream progress lines, then the result.
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        let buf = "";
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          let i: number;
+          while ((i = buf.indexOf("\n")) >= 0) {
+            const line = buf.slice(0, i).trim();
+            buf = buf.slice(i + 1);
+            if (!line) continue;
+            const msg = JSON.parse(line) as { type: string; page?: number; of?: number; result?: AnalysisResult; error?: ApiError["error"] };
+            if (msg.type === "progress") setProgress(`Fetching page ${msg.page} of up to ${msg.of}…`);
+            else if (msg.type === "result") data = msg.result ?? null;
+            else if (msg.type === "error") apiErr = msg.error ?? null;
+          }
+        }
+      } else {
+        const j = (await res.json().catch(() => null)) as AnalysisResult | ApiError | null;
+        if (!res.ok || !j || "error" in j) apiErr = j && "error" in j ? j.error : null;
+        else data = j;
+      }
+
+      if (!data) {
+        if (apiErr?.code === "cancelled") return;
+        fail(apiErr?.code, apiErr?.message ?? "Something went wrong. Please try again.", apiErr?.field ?? field);
         return;
       }
-      showResult(data, label);
+
+      showResult(data, label, meta);
+      if (live) {
+        const ct = (data.contentType ?? "").split(";")[0].trim().toLowerCase();
+        const rejected = data.status === 401 || data.status === 403;
+        if (rejected) setMeasureNote({ tone: "warn", text: `The API rejected the request (HTTP ${data.status}). Check your token or use a staging endpoint.` });
+        else if (!data.isJson && data.rawBytes > 0)
+          setMeasureNote({ tone: "info", text: ct === "text/html" ? "This returned HTML. Measuring it anyway." : `This returned ${ct || "a non-JSON body"}, not JSON. Measuring it anyway.` });
+        track("curl_measured", {
+          mode: meta.kind as "curl" | "form",
+          outcome: rejected ? "error" : "success",
+          error: rejected ? "http_401_403" : "none",
+          paginated: pagedRun,
+        });
+      } else {
+        track("demo_used", { demo: "paste" });
+      }
     } catch {
-      const msg = ctrl.signal.aborted
-        ? "The analysis took too long. The API may be slow or unreachable. Try again or use a lighter endpoint."
-        : "We couldn't reach our server. Check your connection and try again.";
-      setErrors({ [field]: msg });
-      setAnnounce(`Error: ${msg}`);
+      if (run.cancelled) {
+        setAnnounce("Measurement cancelled.");
+        if (live) track("curl_measured", { mode: meta.kind as "curl" | "form", outcome: "cancelled", error: "none", paginated: pagedRun });
+        return;
+      }
+      fail(
+        timedOut ? "timeout" : "network",
+        timedOut
+          ? "The measurement took too long. The API may be slow or unreachable. Try again or use a lighter endpoint."
+          : "We couldn't reach our server. Check your connection and try again.",
+        field,
+      );
     } finally {
       clearTimeout(t);
-      setLoading(false);
+      if (abortRef.current === run) {
+        abortRef.current = null;
+        setLoading(false);
+        setProgress("");
+      }
     }
   }
 
@@ -336,17 +479,22 @@ export default function App({ demoResults }: Props) {
     }
     try {
       const parsed = parseCurl(text);
+      if (!SUPPORTED_METHODS.includes(parsed.method)) {
+        setErrors({ curl: errorText("bad_method", `${parsed.method} isn't supported. Use GET, POST, PUT or PATCH.`) });
+        return;
+      }
       const pg = paginationPayload();
       if (pg.error) {
         setErrors({ param: pg.error });
         setAnnounce(`Error: ${pg.error}`);
         return;
       }
-      void callApi({ mode: "curl", curl: text, ...pg }, describe(parsed.method, parsed.url), "curl");
+      void callApi({ mode: "curl", curl: text, ...pg }, describe(parsed.method, parsed.url), "curl", { kind: "curl", signature });
     } catch (e) {
-      const msg = e instanceof CurlParseError ? e.message : "We couldn't read that curl command.";
+      const msg = errorText("curl_parse", e instanceof CurlParseError ? e.message : "We couldn't read that curl command.");
       setErrors({ curl: msg });
       setAnnounce(`Error: ${msg}`);
+      track("curl_measured", { mode: "curl", outcome: "error", error: "curl_parse", paginated });
     }
   }
 
@@ -383,7 +531,14 @@ export default function App({ demoResults }: Props) {
     const tok = token.trim().replace(/^Bearer\s+/i, "");
     if (tok) headers["Authorization"] = `Bearer ${tok}`;
     if (hasBody) headers["Content-Type"] = "application/json";
-    void callApi({ mode: "request", method, url: u, headers, body: hasBody ? body : undefined, ...pg }, describe(method, u), "url");
+    void callApi({ mode: "request", method, url: u, headers, body: hasBody ? body : undefined, ...pg }, describe(method, u), "url", { kind: "form", signature });
+  }
+
+  function showDemo(id: DemoId) {
+    setErrors({});
+    setMeasureNote(null);
+    showResult(demoResults[id], demoLabel(id), { kind: "demo", signature: `demo|${id}` });
+    track("demo_used", { demo: id });
   }
 
   function submitDemo() {
@@ -392,20 +547,21 @@ export default function App({ demoResults }: Props) {
         setErrors({ json: "Paste a sample response first (JSON or text)." });
         return;
       }
-      void callApi({ mode: "payload", json: pasteJson, servedAs }, "Your pasted sample", "json");
+      void callApi({ mode: "payload", json: pasteJson, servedAs }, "Your pasted sample", "json", { kind: "paste", signature });
       return;
     }
-    setErrors({});
-    const d = DEMOS.find((x) => x.id === demoId)!;
-    showResult(demoResults[d.id], `Demo · ${d.label}`);
+    showDemo(demoId);
   }
 
-  const onSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  function measure() {
     if (loading) return;
     if (tab === "curl") submitCurl();
     else if (tab === "form") submitForm();
     else submitDemo();
+  }
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    measure();
   };
 
   function switchToCurl(text: string) {
@@ -432,10 +588,13 @@ export default function App({ demoResults }: Props) {
       setErrors((e) => ({ ...e, pps: `Enter a whole number from 1 to ${MAX_PAGES_PER_SESSION}.` }));
     }
   }
+  const trackTraffic = (input: "preset" | "custom", unit: "requests" | "sessions", n: number) =>
+    track("traffic_changed", { input, unit, bucket: trafficBucket(n) });
 
-  const pageReqs = pageRequests(sessions, pps);
-  /** What the cost table multiplies by: requests, or sessions × pages per session. */
-  const effectiveRequests = paginated ? pageReqs : requests;
+  function onPricingChange(p: { model: PricingModelId; freeTier: boolean }) {
+    setPricingBase(p);
+    track("pricing_mode_changed", { model: p.model, free_tier: p.freeTier, custom_rates: isCustom({ ...p, custom: customRates[p.model] ?? null }) });
+  }
 
   /**
    * Share link to /s: sizes, traffic and pricing only (see lib/share.ts).
@@ -443,6 +602,7 @@ export default function App({ demoResults }: Props) {
    */
   async function share() {
     if (!displayed || displayed.rawBytes === 0) return;
+    track("share_clicked", { source: "calculator" });
     const state = shareStateFromResult(displayed, {
       requests: effectiveRequests,
       paging: paginated ? { sessions, pagesPerSession: pps } : null,
@@ -451,21 +611,15 @@ export default function App({ demoResults }: Props) {
     const link = `${window.location.origin}${sharePath(state)}`;
     try {
       await navigator.clipboard.writeText(link);
-      setShareMsg("Link copied. It shares sizes, traffic and pricing only, never your URL, headers or response.");
+      showToast("Link copied. It shares sizes, traffic and pricing only, never your URL, headers or response.");
     } catch {
       window.prompt("Copy this link. It shares sizes, traffic and pricing only:", link);
-      setShareMsg("");
     }
-    setAnnounce("Share link ready.");
-    setTimeout(() => setShareMsg(""), 6000);
   }
 
   const currentDemo = DEMOS.find((d) => d.id === demoId);
-
-  // The social demo has a paginated twin; show whichever matches the toggle.
-  const isSocialDemo = result === demoResults.social || result === demoResults.socialPaged;
-  const displayed = isSocialDemo ? (paginated ? demoResults.socialPaged : demoResults.social) : result;
-  const displayedLabel = isSocialDemo && paginated ? "Demo · Social media feed (5 pages × 10 posts)" : resultLabel;
+  const canMeasure = tab === "curl" ? !!curlText.trim() : tab === "form" ? !!url.trim() : demoId !== "paste" || !!pasteJson.trim();
+  const measureLabel = tab === "demo" && demoId !== "paste" ? "Show example result" : "Measure response";
 
   return (
     <div className="page">
@@ -476,13 +630,14 @@ export default function App({ demoResults }: Props) {
         <p className="eyebrow">API Egress Cost Calculator</p>
         <h1>How much does your API response really cost?</h1>
         <p className="subtitle">Paste an endpoint, see your AWS data transfer bill, and what compression would save.</p>
+        <p className="hero-hint">Try the demo, or paste a curl command. Takes a few seconds.</p>
       </header>
 
       <main className="layout">
         <section className="inputs" id="inputs" aria-label="Inputs">
           <div className="card">
             <h2 className="step">
-              <span className="step-num" aria-hidden="true">1</span> Your API response
+              <span className="step-num" aria-hidden="true">1</span> Measure your API response
             </h2>
             <div role="tablist" aria-label="Input mode" className="tabs" onKeyDown={onTabKey}>
               {TABS.map((t) => (
@@ -516,10 +671,12 @@ export default function App({ demoResults }: Props) {
                     id="curl"
                     ref={curlRef}
                     className="mono"
-                    rows={7}
+                    rows={6}
                     spellCheck={false}
                     autoCapitalize="off"
                     autoComplete="off"
+                    autoCorrect="off"
+                    enterKeyHint="go"
                     placeholder={`curl https://api.example.com/v1/items \\\n  -H 'Authorization: Bearer test_token'`}
                     value={curlText}
                     onChange={(e) => {
@@ -527,8 +684,9 @@ export default function App({ demoResults }: Props) {
                       clearError("curl");
                     }}
                     aria-invalid={!!errors.curl}
-                    aria-describedby={`curl-note${errors.curl ? " curl-error" : ""}`}
+                    aria-describedby={`curl-preview curl-note${errors.curl ? " curl-error" : ""}`}
                   />
+                  <CurlConfirm preview={curlPreview} />
                   <FieldError id="curl-error" msg={errors.curl} />
                   <PrivacyNote id="curl-note" />
                 </div>
@@ -643,10 +801,7 @@ export default function App({ demoResults }: Props) {
                         const v = e.target.value as DemoId | "paste";
                         setDemoId(v);
                         setErrors({});
-                        if (v !== "paste") {
-                          const d = DEMOS.find((x) => x.id === v)!;
-                          showResult(demoResults[d.id], `Demo · ${d.label}`);
-                        }
+                        if (v !== "paste") showDemo(v);
                       }}
                     >
                       {DEMOS.map((d) => (
@@ -665,7 +820,7 @@ export default function App({ demoResults }: Props) {
                         <textarea
                           id="paste"
                           className="mono"
-                          rows={7}
+                          rows={6}
                           spellCheck={false}
                           placeholder='{"items": [ ... ]}'
                           value={pasteJson}
@@ -679,7 +834,7 @@ export default function App({ demoResults }: Props) {
                         <FieldError id="paste-error" msg={errors.json} />
                         {!errors.json && (
                           <p className="hint" id="paste-hint">
-                            Analyzed on our server, never stored. No outbound request is made.
+                            Measured on our server, never stored. No outbound request is made.
                           </p>
                         )}
                       </div>
@@ -720,86 +875,71 @@ export default function App({ demoResults }: Props) {
                   </p>
                 )}
 
-                {paginated && (
-                  <div className="pagination-fields">
-                    {tab === "demo" ? (
-                      <p className="hint">
-                        {demoId === "social"
-                          ? "The Social media feed demo has 5 locally generated cursor pages (10 posts each). No network call."
-                          : demoId === "paste"
-                            ? "A pasted sample counts as one average page."
-                            : "Only the Social media feed demo is paginated. This one counts as a single page."}
-                      </p>
-                    ) : (
-                      <div className="field">
-                        <label htmlFor="page-param">Pagination param</label>
-                        <input
-                          id="page-param"
-                          type="text"
-                          list="page-param-options"
-                          autoComplete="off"
-                          autoCapitalize="off"
-                          spellCheck={false}
-                          placeholder="e.g. page, offset or cursor"
-                          value={paramName}
-                          onChange={(e) => {
-                            setParamName(e.target.value);
-                            clearError("param");
-                          }}
-                          aria-invalid={!!errors.param}
-                          aria-describedby={errors.param ? "param-error" : "param-hint"}
-                        />
-                        <datalist id="page-param-options">
-                          {PAGINATION_PARAMS.map((p) => (
-                            <option key={p} value={p} />
-                          ))}
-                        </datalist>
-                        <FieldError id="param-error" msg={errors.param} />
-                        {!errors.param && (
-                          <p className="hint" id="param-hint">
-                            We fetch up to {MAX_SAMPLED_PAGES} real pages, one at a time, changing only this param.
-                          </p>
-                        )}
-                      </div>
-                    )}
-                    <div className="field pps-field">
-                      <label htmlFor="pps">Pages per session</label>
+                {paginated &&
+                  (tab === "demo" ? (
+                    <p className="hint">
+                      {demoId === "social"
+                        ? "The Social media feed demo has 5 locally generated cursor pages (10 posts each). No network call."
+                        : demoId === "paste"
+                          ? "A pasted sample counts as one average page."
+                          : "Only the Social media feed demo is paginated. This one counts as a single page."}
+                    </p>
+                  ) : (
+                    <div className="field pagination-fields">
+                      <label htmlFor="page-param">Pagination param</label>
                       <input
-                        id="pps"
-                        type="number"
-                        inputMode="numeric"
-                        min={1}
-                        max={MAX_PAGES_PER_SESSION}
-                        step={1}
-                        value={ppsText}
-                        onChange={(e) => onPpsChange(e.target.value)}
-                        onBlur={() => {
-                          if (!errors.pps) setPpsText(String(pps));
+                        id="page-param"
+                        type="text"
+                        list="page-param-options"
+                        autoComplete="off"
+                        autoCapitalize="off"
+                        spellCheck={false}
+                        placeholder="e.g. page, offset or cursor"
+                        value={paramName}
+                        onChange={(e) => {
+                          setParamName(e.target.value);
+                          clearError("param");
                         }}
-                        aria-invalid={!!errors.pps}
-                        aria-describedby={errors.pps ? "pps-error" : "pps-hint"}
+                        aria-invalid={!!errors.param}
+                        aria-describedby={errors.param ? "param-error" : "param-hint"}
                       />
-                      <FieldError id="pps-error" msg={errors.pps} />
-                      {!errors.pps && (
-                        <p className="hint" id="pps-hint">
-                          Assumes the average user scrolls {pps} page{pps === 1 ? "" : "s"}.
+                      <datalist id="page-param-options">
+                        {PAGINATION_PARAMS.map((p) => (
+                          <option key={p} value={p} />
+                        ))}
+                      </datalist>
+                      <FieldError id="param-error" msg={errors.param} />
+                      {!errors.param && (
+                        <p className="hint" id="param-hint">
+                          We fetch up to {MAX_SAMPLED_PAGES} real pages, one at a time, changing only this param.
                         </p>
                       )}
                     </div>
-                  </div>
-                )}
+                  ))}
               </div>
 
               <FieldError id="general-error" msg={errors.general} />
-              <button type="submit" className="btn-primary" disabled={loading} aria-busy={loading}>
-                {loading ? (
-                  <>
-                    <span className="spinner" aria-hidden="true" /> Analyzing…
-                  </>
-                ) : (
-                  "Analyze"
+              <div className="measure-actions">
+                <button type="submit" className="btn-primary" disabled={loading} aria-busy={loading}>
+                  {loading ? (
+                    <>
+                      <span className="spinner" aria-hidden="true" /> {progress || "Measuring…"}
+                    </>
+                  ) : (
+                    measureLabel
+                  )}
+                </button>
+                {loading && (
+                  <button type="button" className="btn-ghost" onClick={cancelMeasure}>
+                    Cancel
+                  </button>
                 )}
-              </button>
+              </div>
+              {measureNote && !loading && (
+                <p className={`measure-note measure-note-${measureNote.tone}`} role="status">
+                  {measureNote.text}
+                </p>
+              )}
             </form>
           </div>
 
@@ -807,52 +947,75 @@ export default function App({ demoResults }: Props) {
             <h2 className="step">
               <span className="step-num" aria-hidden="true">2</span> Your traffic
             </h2>
+            <p className="step-intro">Adjust the estimate — it updates instantly, no need to measure again.</p>
             {paginated ? (
-              <div className="field">
-                <label htmlFor="sessions">Monthly sessions</label>
-                <input
-                  id="sessions"
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="off"
-                  value={sessionsText}
-                  onChange={(e) => onSessionsChange(e.target.value)}
-                  onBlur={() => {
-                    if (!errors.sessions) setSessionsText(formatNumber(sessions));
-                  }}
-                  aria-invalid={!!errors.sessions}
-                  aria-describedby={errors.sessions ? "sessions-error" : "sessions-derived sessions-hint"}
-                />
-                <FieldError id="sessions-error" msg={errors.sessions} />
-                <p className="derived" id="sessions-derived">
-                  = {formatNumber(pageReqs)} page requests/month <span className="hint-inline">(sessions × pages per session)</span>
-                </p>
-                <div className="chips" role="group" aria-label="Preset monthly sessions">
-                  {SESSION_PRESETS.map((p) => (
-                    <button
-                      key={p}
-                      type="button"
-                      className="chip"
-                      aria-pressed={sessions === p}
-                      onClick={() => {
-                        setSessions(p);
-                        setSessionsText(formatNumber(p));
-                        clearError("sessions");
-                      }}
-                    >
-                      {compactCount(p)}
-                    </button>
-                  ))}
+              <>
+                <div className="field">
+                  <label htmlFor="sessions">Sessions per month</label>
+                  <input
+                    id="sessions"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    value={sessionsText}
+                    onChange={(e) => onSessionsChange(e.target.value)}
+                    onBlur={() => {
+                      if (!errors.sessions) setSessionsText(formatNumber(sessions));
+                      trackTraffic("custom", "sessions", sessions);
+                    }}
+                    aria-invalid={!!errors.sessions}
+                    aria-describedby={errors.sessions ? "sessions-error" : "traffic-derived"}
+                  />
+                  <FieldError id="sessions-error" msg={errors.sessions} />
+                  <div className="chips" role="group" aria-label="Preset sessions per month">
+                    {SESSION_PRESETS.map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        className="chip"
+                        aria-pressed={sessions === p}
+                        onClick={() => {
+                          setSessions(p);
+                          setSessionsText(formatNumber(p));
+                          clearError("sessions");
+                          trackTraffic("preset", "sessions", p);
+                        }}
+                      >
+                        {compactCount(p)}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <p className="hint" id="sessions-hint">
-                  Monthly egress = sessions × pages per session × average page size. Headers and TLS overhead are not counted.
+                <div className="field pps-field">
+                  <label htmlFor="pps">Pages per session</label>
+                  <input
+                    id="pps"
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    max={MAX_PAGES_PER_SESSION}
+                    step={1}
+                    value={ppsText}
+                    onChange={(e) => onPpsChange(e.target.value)}
+                    onBlur={() => {
+                      if (!errors.pps) setPpsText(String(pps));
+                    }}
+                    aria-invalid={!!errors.pps}
+                    aria-describedby={errors.pps ? "pps-error" : "traffic-derived"}
+                  />
+                  <FieldError id="pps-error" msg={errors.pps} />
+                </div>
+                <p className="derived" id="traffic-derived" aria-live="polite">
+                  = {formatNumber(pageReqs)} requests/month <span className="hint-inline">(sessions × pages per session)</span>
                 </p>
-              </div>
+                <p className="hint">Monthly egress = average page size × requests per month. Headers and TLS overhead are not counted.</p>
+              </>
             ) : (
               <div className="field">
-                <label htmlFor="requests">Monthly requests</label>
+                <label htmlFor="requests">Requests per month</label>
                 <input
                   id="requests"
+                  ref={requestsRef}
                   type="text"
                   inputMode="numeric"
                   autoComplete="off"
@@ -860,12 +1023,13 @@ export default function App({ demoResults }: Props) {
                   onChange={(e) => onRequestsChange(e.target.value)}
                   onBlur={() => {
                     if (!errors.requests) setRequestsText(formatNumber(requests));
+                    trackTraffic("custom", "requests", requests);
                   }}
                   aria-invalid={!!errors.requests}
                   aria-describedby={errors.requests ? "requests-error" : "requests-hint"}
                 />
                 <FieldError id="requests-error" msg={errors.requests} />
-                <div className="chips" role="group" aria-label="Preset monthly requests">
+                <div className="chips" role="group" aria-label="Preset requests per month">
                   {PRESETS.map((p) => (
                     <button
                       key={p}
@@ -876,14 +1040,26 @@ export default function App({ demoResults }: Props) {
                         setRequests(p);
                         setRequestsText(formatNumber(p));
                         clearError("requests");
+                        trackTraffic("preset", "requests", p);
                       }}
                     >
                       {compactCount(p)}
                     </button>
                   ))}
+                  <button
+                    type="button"
+                    className="chip"
+                    aria-pressed={!PRESETS.includes(requests)}
+                    onClick={() => {
+                      requestsRef.current?.focus();
+                      requestsRef.current?.select();
+                    }}
+                  >
+                    Custom
+                  </button>
                 </div>
                 <p className="hint" id="requests-hint">
-                  Monthly egress = response size × monthly requests. Assumes every request returns this response; headers and TLS overhead are not counted.
+                  Monthly egress = response size × requests per month. Assumes every request returns this response; headers and TLS overhead are not counted.
                 </p>
               </div>
             )}
@@ -891,17 +1067,31 @@ export default function App({ demoResults }: Props) {
 
           <PricingPanel
             step={3}
+            intro="Adjust the estimate — it updates instantly."
             pricing={pricing}
-            onChange={setPricingBase}
-            onRatesChange={(r) => setCustomRates((m) => ({ ...m, [pricingBase.model]: r ?? undefined }))}
+            onChange={onPricingChange}
+            onRatesChange={(r) => {
+              setCustomRates((m) => ({ ...m, [pricingBase.model]: r ?? undefined }));
+              track("pricing_mode_changed", { model: pricingBase.model, free_tier: pricingBase.freeTier, custom_rates: !!r });
+            }}
             editorKey={hydrated ? "ready" : "init"}
             onShare={share}
             shareDisabled={!displayed || displayed.rawBytes === 0}
-            shareMsg={shareMsg}
           />
         </section>
 
-        <section className="results" aria-label="Results">
+        <section className="results" aria-label="Results" aria-busy={loading}>
+          <StatusBanner
+            status={status}
+            progress={progress}
+            lastError={lastError}
+            resultKind={resultMeta.kind}
+            resultLabel={displayedLabel}
+            tab={tab}
+            canMeasure={canMeasure}
+            onMeasure={measure}
+            onCancel={cancelMeasure}
+          />
           <Results
             key={resultKey}
             result={displayed}
@@ -909,7 +1099,10 @@ export default function App({ demoResults }: Props) {
             requests={effectiveRequests}
             paging={paginated ? { sessions, pagesPerSession: pps } : null}
             pricing={pricing}
+            mix={mix}
+            onMixChange={setMix}
             animate={resultKey > 0}
+            dimmed={status === "stale" || status === "loading" || status === "error"}
           />
         </section>
       </main>
@@ -919,7 +1112,94 @@ export default function App({ demoResults }: Props) {
       </div>
 
       <SiteFooter />
+      <ToastHost />
     </div>
+  );
+}
+
+/** Tells the user, in words, whether the results match what's in the inputs. */
+function StatusBanner({
+  status,
+  progress,
+  lastError,
+  resultKind,
+  resultLabel,
+  tab,
+  canMeasure,
+  onMeasure,
+  onCancel,
+}: {
+  status: ResultStatus;
+  progress: string;
+  lastError: string | null;
+  resultKind: ResultMeta["kind"];
+  resultLabel: string;
+  tab: Tab;
+  canMeasure: boolean;
+  onMeasure: () => void;
+  onCancel: () => void;
+}) {
+  if (status === "loading") {
+    return (
+      <div className="status-banner status-loading" role="status">
+        <span className="spinner spinner-dark" aria-hidden="true" />
+        <span>{progress || "Measuring…"}</span>
+        <button type="button" className="btn-ghost" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    );
+  }
+  if (status === "error") {
+    return (
+      <div className="status-banner status-error" role="alert">
+        <span>
+          <strong>Measurement failed.</strong> {lastError} The results below are from before.
+        </span>
+      </div>
+    );
+  }
+  if (status === "stale") {
+    const showingExample = resultKind === "demo" && tab !== "demo";
+    const text = showingExample
+      ? `Showing ${resultLabel.replace(/^Example: /, "example: ")}. ${
+          canMeasure ? "Measure your response to see yours." : tab === "curl" ? "Paste a curl command and measure it to see yours." : "Enter your API URL and measure it to see yours."
+        }`
+      : "Inputs changed — measure again to update these results.";
+    return (
+      <div className="status-banner status-stale" role="status">
+        <span>{text}</span>
+        {canMeasure && (
+          <button type="button" className="btn-ghost" onClick={onMeasure}>
+            {showingExample ? "Measure response" : "Measure again"}
+          </button>
+        )}
+      </div>
+    );
+  }
+  return null;
+}
+
+/** "GET https://api.example.com/v1/items · 2 headers (Authorization: •••• hidden)" */
+function CurlConfirm({ preview }: { preview: ReturnType<typeof previewCurl> }) {
+  if (!preview) return <p className="curl-preview" id="curl-preview" hidden />;
+  if (!preview.ok) {
+    return (
+      <p className="curl-preview curl-preview-warn" id="curl-preview">
+        Invalid curl: {preview.error}
+      </p>
+    );
+  }
+  return (
+    <p className={`curl-preview${preview.methodSupported ? "" : " curl-preview-warn"}`} id="curl-preview">
+      <span className="curl-preview-label">Will send:</span>{" "}
+      <code>
+        {preview.method} {preview.url}
+      </code>{" "}
+      · {describeHeaders(preview.headerCount, preview.hidden)}
+      {preview.bodyBytes > 0 ? ` · ${formatNumber(preview.bodyBytes)} byte body` : ""}
+      {!preview.methodSupported && ` · ${preview.method} isn't supported. Use GET, POST, PUT or PATCH.`}
+    </p>
   );
 }
 
@@ -977,7 +1257,7 @@ function CurlTips() {
           <strong>Tips</strong>
           <span>In Chrome DevTools → Network, right-click a request → Copy → Copy as cURL (bash).</span>
           <span>Supported: -X, -H, -d / --data-raw / --data-binary / --json, -u. Multi-line commands with \ are fine.</span>
-          <span>Ignored: --compressed, -L, -k, -s, -i, -v (redirects are always followed, up to 3). We set Accept-Encoding ourselves.</span>
+          <span>Ignored: --compressed, -L, -k, -s, -i, -v. We set Accept-Encoding ourselves.</span>
           <span>Up to 3 redirects are followed, and each one is re-checked. Credentials are dropped if a redirect leaves the original site.</span>
         </span>
       )}

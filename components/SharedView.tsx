@@ -1,12 +1,14 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { DEFAULT_CLIENT_MIX, type ClientMix } from "../lib/estimate";
 import { formatBytes, formatNumber } from "../lib/format";
 import type { ModelRates, PricingModelId, PricingOptions } from "../lib/pricing";
 import { resultFromShare, shareMonthlyRequests, type ShareState } from "../lib/share";
 import PricingPanel from "./PricingPanel";
 import Results from "./Results";
 import SiteFooter from "./SiteFooter";
+import ToastHost from "./Toast";
 
 /**
  * Read-only results rebuilt from a share link. No request is re-run: the
@@ -19,6 +21,7 @@ export default function SharedView({ state }: { state: ShareState }) {
     state.pricing.custom ? { [state.pricing.model]: state.pricing.custom } : {},
   );
   const pricing: PricingOptions = { ...base, custom: customRates[base.model] ?? null };
+  const [mix, setMix] = useState<ClientMix>(DEFAULT_CLIENT_MIX);
   const result = useMemo(() => resultFromShare(state), [state]);
   const requests = shareMonthlyRequests(state);
   const paging = state.paging ? { sessions: state.paging.sessions, pagesPerSession: state.paging.pagesPerSession } : null;
@@ -56,7 +59,7 @@ export default function SharedView({ state }: { state: ShareState }) {
                 <dt>Traffic</dt>
                 <dd>
                   {state.paging
-                    ? `${formatNumber(state.paging.sessions)} sessions/month × ${state.paging.pagesPerSession} pages = ${formatNumber(requests)} page requests/month`
+                    ? `${formatNumber(state.paging.sessions)} sessions/month × ${state.paging.pagesPerSession} pages per session = ${formatNumber(requests)} requests/month`
                     : `${formatNumber(requests)} requests/month`}
                 </dd>
               </div>
@@ -80,11 +83,12 @@ export default function SharedView({ state }: { state: ShareState }) {
         </section>
 
         <section className="results" aria-label="Results">
-          <Results result={result} label="Shared result" requests={requests} paging={paging} pricing={pricing} />
+          <Results result={result} label="Shared result" requests={requests} paging={paging} pricing={pricing} mix={mix} onMixChange={setMix} />
         </section>
       </main>
 
       <SiteFooter />
+      <ToastHost />
     </div>
   );
 }

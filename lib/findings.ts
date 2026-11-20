@@ -1,3 +1,4 @@
+import { sizeReduction } from "./format";
 import type { Finding } from "./types";
 import { findMissingValueLiterals, findTokensInUrl } from "./urlChecks";
 
@@ -46,11 +47,6 @@ export function isAlreadyCompressedType(contentType: string | null): boolean {
   ].includes(ct);
 }
 
-function times(a: number, b: number): string {
-  if (!(b > 0)) return "";
-  const r = a / b;
-  return r >= 10 ? r.toFixed(0) : r.toFixed(1);
-}
 
 /** Normalize a Content-Encoding value: "gzip", "br", "zstd", "deflate" or null for identity. */
 export function normalizeEncoding(ce: string | null): string | null {
@@ -159,9 +155,11 @@ export function buildFindings(f: FindingInput): Finding[] {
       id: "no-compression",
       severity: "high",
       title: f.assumedEncoding ? "Turn on compression (assuming it's off today)" : "Compression is off",
-      detail: `This response would shrink ${times(f.rawBytes, best.bytes)}x with ${best.name}${
-        f.isJson ? " (JSON typically shrinks ~4–6x)" : ""
-      }. Enable it at your server, API gateway or CDN.`,
+      // No ratio here on purpose: the summary and "Cost by format" show it,
+      // computed once from the same sizes, so the numbers can't disagree.
+      detail: `Enable it at your server, API gateway or CDN and serve the best format each client asks for: Zstd → Brotli → Gzip.${
+        f.isJson ? " JSON typically shrinks 4–6x." : ""
+      } See "Cost by format" for each format's size.`,
     });
   }
 
@@ -172,11 +170,11 @@ export function buildFindings(f: FindingInput): Finding[] {
     ].filter((c): c is { name: string; bytes: number } => c.bytes !== null && c.bytes > 0 && c.bytes <= f.gzipBytes! * 0.9);
     if (better.length > 0) {
       const b = better.reduce((a, c) => (c.bytes < a.bytes ? c : a));
-      const pct = Math.round((1 - b.bytes / f.gzipBytes) * 100);
+      const pct = sizeReduction(f.gzipBytes, b.bytes)!.pctText;
       out.push({
         id: "gzip-only",
         severity: "medium",
-        title: `You serve Gzip only; ${b.name} is ${pct}% smaller`,
+        title: `You serve Gzip only; ${b.name} is ${pct} smaller`,
         detail: `Negotiate per client using Accept-Encoding: send ${better.map((x) => x.name).join(" or ")} to clients that support it and fall back to Gzip.`,
       });
     }

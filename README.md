@@ -68,6 +68,20 @@ Under the curl and form inputs the UI says: *"Your request runs once on our serv
 
 **Share this setup** copies a `/s?…` link built by [lib/share.ts](lib/share.ts) from an allow-list: byte sizes per format, monthly requests (or sessions, pages per session and pages sampled), pricing model, free-tier toggle, a bucketed content type (vendor types become `application/json` or `other`) and the served encoding. The curl command, URL, query string, headers, cookies, tokens and response body are never included; [tests/share.test.ts](tests/share.test.ts) plants secrets in all of them and fails if any appear in the link. Opening the link rebuilds the results without re-running any request and shows a "Shared result" banner. `/api/og` renders the preview card with `next/og` and Poppins (TTFs in `assets/fonts`, OFL licensed).
 
+### Analytics
+
+[Vercel Web Analytics](https://vercel.com/docs/analytics) is enabled (`components/SiteAnalytics.tsx`). It's cookieless, and query strings are stripped from every recorded URL. Custom events go through [lib/analytics.ts](lib/analytics.ts), which only lets through fixed event names with fixed property values:
+
+| Event | Properties |
+|---|---|
+| `demo_used` | `demo` (social / ecommerce / analytics / paste) |
+| `curl_measured` | `mode` (curl/form), `outcome` (success/error/cancelled), `error` (a fixed error code), `paginated` |
+| `traffic_changed` | `input` (preset/custom), `unit` (requests/sessions), `bucket` (e.g. 1M-10M) |
+| `pricing_mode_changed` | `model`, `free_tier`, `custom_rates` |
+| `share_clicked`, `copy_results_clicked` | `source` |
+
+No URL, header, token, size or response body can be sent; [tests/estimate.test.ts](tests/estimate.test.ts) checks that unknown keys and values are dropped. Note: custom events are only recorded on Vercel **Pro**. On Hobby you get page views, and the event calls are harmless no-ops.
+
 ## Pagination
 
 Turn on **"Is this endpoint paginated?"** under the request inputs. It switches on by itself when the URL has a `skip`, `offset`, `page`, `pageNumber`, `p` or `cursor` query param.
